@@ -1,0 +1,6 @@
+{
+  "name": "FocusOn",
+  "description": "A calm, recovery-first productivity and focus coach companion MVP.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

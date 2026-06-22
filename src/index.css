@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background-color: #0A0A0A; /* Matte Black */
+  color: #FAFAFA;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Minimalist container */
+.glass-panel {
+  background: #0A0A0A;
+  border: 1px solid #1A1A1A;
+}
+
+.glass-panel-hover {
+  transition: all 0.2s ease-out;
+}
+
+.glass-panel-hover:hover {
+  background: #121212;
+  border-color: #2A2A2A;
+}
+
+.glass-panel-hover:active {
+  transform: scale(0.995);
+}
+
+/* Premium input */
+.premium-input {
+  background: #0A0A0A;
+  border: 1px solid #1A1A1A;
+  transition: border-color 0.2s ease-out, background 0.2s ease-out;
+}
+
+.premium-input:focus {
+  border-color: #FAFAFA;
+  background: #121212;
+  outline: none;
+}
+
+/* Text utility classes (no glows anymore) */
+.text-glow {
+  text-shadow: none;
+}
+
+.text-glow-soft {
+  text-shadow: none;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2A2A2A;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #FAFAFA;
+}

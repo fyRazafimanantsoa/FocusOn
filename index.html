@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FocusOn — Recovery-First Focus Coach</title>
+    <script>
+      const isBenignError = (msg) => {
+        const m = String(msg).toLowerCase();
+        return m.includes('websocket') || m.includes('vite') || m.includes('hmr') || m.includes('closed without opened');
+      };
+      
+      // Suppress unhandled exceptions
+      window.addEventListener('error', (e) => {
+        if (isBenignError(e.message)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+      
+      window.addEventListener('unhandledrejection', (e) => {
+        if (isBenignError(e.reason?.message || e.reason)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+
+      // Intercept console.error to silence the Vite WebSocket error
+      const originalConsoleError = console.error;
+      console.error = function(...args) {
+        if (args.some(arg => typeof arg === 'string' && isBenignError(arg))) {
+          return;
+        }
+        if (args[0] && typeof args[0].message === 'string' && isBenignError(args[0].message)) {
+          return;
+        }
+        originalConsoleError.apply(console, args);
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
