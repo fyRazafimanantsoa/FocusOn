@@ -153,7 +153,7 @@ export default function ProgressTab({ sessions, profile, onDeleteSession }: Prog
         {/* Stat Card 1: TOTAL FOCUS HOURS & PROGRESS */}
         <motion.div 
           variants={cardVariants} 
-          className="bg-[#121212] border border-[#2A2A2A] rounded p-4 flex flex-col justify-between"
+          className="bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 rounded p-4 flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
@@ -189,7 +189,7 @@ export default function ProgressTab({ sessions, profile, onDeleteSession }: Prog
         {/* Stat Card 2: STARTING STREAK */}
         <motion.div 
           variants={cardVariants} 
-          className="bg-[#121212] border border-[#2A2A2A] rounded p-4 flex flex-col justify-between"
+          className="bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 rounded p-4 flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
@@ -219,7 +219,7 @@ export default function ProgressTab({ sessions, profile, onDeleteSession }: Prog
         {/* Stat Card 3: CORE RESILIENCE RATIO */}
         <motion.div 
           variants={cardVariants} 
-          className="bg-[#121212] border border-[#2A2A2A] rounded p-4 flex flex-col justify-between"
+          className="bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 rounded p-4 flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
@@ -243,7 +243,7 @@ export default function ProgressTab({ sessions, profile, onDeleteSession }: Prog
         {/* Stat Card 4: PEAK FLOW TIMESPOT */}
         <motion.div 
           variants={cardVariants} 
-          className="bg-[#121212] border border-[#2A2A2A] rounded p-4 flex flex-col justify-between"
+          className="bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 rounded p-4 flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
@@ -267,13 +267,13 @@ export default function ProgressTab({ sessions, profile, onDeleteSession }: Prog
 
       {/* Time Usage Chart with Premium Visuals */}
       {sessions.length > 0 ? (
-        <div className="bg-[#121212] border border-[#2A2A2A] rounded p-5 space-y-4">
+        <div className="bg-[#121212]/85 backdrop-blur-md border border-[#2A2A2A]/80 rounded p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-[#888888] shrink-0" />
               <span className="text-[9px] font-mono text-[#888888] uppercase tracking-widest font-bold">Flow Allocation Activity (m)</span>
             </div>
-            <div className="flex gap-1 border border-[#2A2A2A] rounded p-0.5">
+            <div className="flex gap-1 border border-[#2A2A2A]/80 rounded p-0.5">
               {['day', 'week', 'month'].map((v) => (
                 <button
                   key={v}
@@ -290,8 +290,8 @@ export default function ProgressTab({ sessions, profile, onDeleteSession }: Prog
             </div>
           </div>
           
-          <div className="h-44 w-full mt-2">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-44 w-full mt-2 min-h-[176px]">
+            <ResponsiveContainer width="100%" height={176}>
               <BarChart data={chartData} margin={{ top: 5, right: 0, left: 0, bottom: 5 }}>
                 <defs>
                   <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">

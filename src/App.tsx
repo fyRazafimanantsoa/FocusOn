@@ -266,26 +266,50 @@ export default function App() {
 
   return (
     <div className="min-h-screen text-[#94A3B8] flex flex-col justify-between relative overflow-x-hidden font-sans selection:bg-zinc-800 selection:text-white bg-transparent">
-      {/* Background ambient light spotlights */}
-      <div className="absolute -top-80 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-gradient-to-b from-white/[0.02] to-transparent rounded-full blur-[130px] pointer-events-none" />
+      {/* Background ambient light spotlights (optimized with radial gradients to avoid GPU-choking blur filters) */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+        <motion.div
+          animate={{
+            opacity: [0.12, 0.22, 0.12],
+          }}
+          transition={{
+            duration: 14,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
+          className="absolute -top-[250px] left-1/2 -translate-x-1/2 w-[900px] h-[900px] bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.18),transparent_65%)]"
+        />
+        <motion.div
+          animate={{
+            opacity: [0.06, 0.14, 0.06],
+          }}
+          transition={{
+            duration: 18,
+            repeat: Infinity,
+            ease: "easeInOut",
+            delay: 3,
+          }}
+          className="absolute top-10 left-1/2 -translate-x-1/2 w-[750px] h-[750px] bg-[radial-gradient(circle_at_center,rgba(161,161,170,0.12),transparent_65%)]"
+        />
+      </div>
 
       {/* Main Container */}
-      <div className="flex-1 w-full max-w-xl mx-auto px-5 pt-8 pb-32 relative z-10">
+      <div className="flex-1 w-full max-w-xl mx-auto px-5 pt-4 xs:pt-8 sm:pt-12 pb-24 xs:pb-28 sm:pb-32 relative z-10">
         
         {/* Header with exquisite craft details */}
         <motion.header 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 1, ease: "easeOut" }}
-          className="flex items-center justify-between py-6 border-b border-[#1A1A1A] mb-12"
+          className="flex items-center justify-between mb-6 xs:mb-8 sm:mb-12 rotate-[-1.5deg] -ml-2"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-[#121212] flex items-center justify-center border border-[#2A2A2A]">
-              <CircleDot className="w-4 h-4 text-white" />
+          <div className="flex items-center gap-0">
+            <div className="w-8 h-8 bg-white flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.4)] relative z-20">
+              <CircleDot className="w-4 h-4 text-black" />
             </div>
-            <div className="flex flex-col text-left">
-              <span className="font-sans font-medium text-sm tracking-wide text-white leading-none">AE-01</span>
-              <span className="text-[10px] font-mono text-[#666666] tracking-wide mt-1">Focus Module</span>
+            <div className="flex flex-col text-left bg-[#121212] pt-4 pr-8 pb-2 pl-6 -ml-3 rotate-[2deg] border border-[#2A2A2A] z-10">
+              <span className="font-sans font-black text-2xl tracking-tighter text-white leading-[0.85]">FocusOn</span>
+              <span className="text-[10px] font-mono text-[#888888] tracking-[0.2em] mt-1 uppercase">Focus Module</span>
             </div>
           </div>
 

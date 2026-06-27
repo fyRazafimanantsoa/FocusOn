@@ -101,6 +101,48 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   const [tinyStep, setTinyStep] = useState("");
   const [sessionMinutes, setSessionMinutes] = useState<number | "">(profile.adhdMode ? 20 : 25);
   const [timeRemaining, setTimeRemaining] = useState((profile.adhdMode ? 20 : 25) * 60);
+  const [timeUnit, setTimeUnit] = useState<"min" | "hrs">("min");
+  const [inputValue, setInputValue] = useState<string>(
+    profile.adhdMode ? "20" : "25"
+  );
+
+  // Keep manual input value in sync when minutes change (unless actively typing in it)
+  useEffect(() => {
+    if (document.activeElement?.id === "session-length-input") {
+      return;
+    }
+    if (sessionMinutes !== "") {
+      if (timeUnit === "min") {
+        setInputValue(sessionMinutes.toString());
+      } else {
+        const hrs = Math.round((sessionMinutes / 60) * 10) / 10;
+        setInputValue(hrs.toString());
+      }
+    } else {
+      setInputValue("");
+    }
+  }, [sessionMinutes, timeUnit]);
+
+  const handleUnitChange = (newUnit: "min" | "hrs") => {
+    setTimeUnit(newUnit);
+    if (sessionMinutes !== "") {
+      if (newUnit === "min") {
+        setInputValue(sessionMinutes.toString());
+      } else {
+        const hrs = Math.round((sessionMinutes / 60) * 10) / 10;
+        setInputValue(hrs.toString());
+      }
+    }
+  };
+
+  const formatSessionMinutes = (mins: number | "") => {
+    if (mins === "") return "";
+    if (mins >= 60) {
+      const hrs = Math.round((mins / 60) * 10) / 10;
+      return `${hrs}h`;
+    }
+    return `${mins}m`;
+  };
 
   // Interval states
   const [intervalCount, setIntervalCount] = useState<number | "">(4);
@@ -119,6 +161,15 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   const [stuckCount, setStuckCount] = useState(0);
   const [distractionCount, setDistractionCount] = useState(0);
   const [apparentActivity, setApparentActivity] = useState("");
+  const [showAddTime, setShowAddTime] = useState(false);
+  const [customAddMins, setCustomAddMins] = useState("");
+
+  const handleAddTime = (minsToAdd: number) => {
+    setSessionMinutes(prev => (typeof prev === 'number' ? prev + minsToAdd : 25 + minsToAdd));
+    setTimeRemaining(prev => prev + minsToAdd * 60);
+    setShowAddTime(false);
+    setCustomAddMins("");
+  };
 
   // Timer Ref
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -277,14 +328,16 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
         if (delta > 0) {
           lastTickTime.current = now;
           if (focusState === "guilt_free_break") {
-            setGuiltFreeRemaining((prev) => {
-              if (prev - delta <= 0) {
-                workerRef.current?.postMessage('stop');
-                handleGuiltFreeZero();
-                return 0;
-              }
-              return prev - delta;
-            });
+            if (sessionMode !== "single") {
+              setGuiltFreeRemaining((prev) => {
+                if (prev - delta <= 0) {
+                  workerRef.current?.postMessage('stop');
+                  handleGuiltFreeZero();
+                  return 0;
+                }
+                return prev - delta;
+              });
+            }
           } else {
             setTimeRemaining((prev) => {
               if (prev - delta <= 0) {
@@ -340,8 +393,11 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   };
 
   const handleCompleteSession = () => {
-    const min = sessionMinutes || 25;
-    const elapsedNow = (focusState === "focusing" || focusState === "paused") ? (min * 60 - timeRemaining) : 0;
+    const min = typeof sessionMinutes === 'number' ? sessionMinutes : 25;
+    let elapsedNow = 0;
+    if (focusState !== "idle" && focusState !== "tiny_step" && focusState !== "interval_break") {
+      elapsedNow = Math.max(0, min * 60 - timeRemaining);
+    }
     setAccumulatedFocusSeconds(prev => prev + elapsedNow);
     setNextStepCaptured("");
     playEndSound();
@@ -352,15 +408,19 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   const handleSaveReflection = async () => {
     setIsSaving(true);
     try {
-      const min = sessionMinutes || 25;
+      const min = typeof sessionMinutes === 'number' ? sessionMinutes : 25;
       const count = intervalCount || 1;
+      
+      // Ensure we log exactly what was accumulated. If 0, then 0.
+      const finalDuration = accumulatedFocusSeconds;
+      
       // Save to Firebase
       await onSessionSave({
         userId: user?.uid || "guest",
         taskName,
         tinyStep,
         originalDurationMinutes: sessionMode === "interval" ? min * count : min,
-        actualDurationSeconds: accumulatedFocusSeconds > 0 ? accumulatedFocusSeconds : min * 60,
+        actualDurationSeconds: finalDuration,
         completed: true,
         status: "completed",
         createdAt: new Date().toISOString(),
@@ -424,17 +484,17 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
             className="space-y-7"
           >
             {/* Prompt Header */}
-            <div className="space-y-1.5 text-center sm:text-left">
-              <h2 className="text-2xl font-bold tracking-tight text-white leading-tight">
+            <div className="space-y-1.5 text-left bg-[#121212]/80 backdrop-blur-md pt-10 pr-4 pb-3 pl-8 border border-[#2A2A2A]/80 rotate-[1.5deg] mb-4 relative z-10">
+              <h2 className="text-4xl sm:text-5xl font-black tracking-tighter leading-[0.85] text-white uppercase">
                 What are you working on?
               </h2>
-              <p className="text-zinc-400 text-xs sm:text-sm">
+              <p className="text-[#888888] font-mono tracking-[0.15em] text-[9px] uppercase mt-4">
                 Name your immediate priority. We will filter out the noise next.
               </p>
             </div>
 
             {/* Input Form and suggestions */}
-            <div className="space-y-5">
+            <div className="space-y-5 bg-black/80 backdrop-blur-md p-6 border border-[#2A2A2A]/80 -rotate-1 relative z-20">
               <div className="relative">
                 <input
                   type="text"
@@ -480,45 +540,115 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 <div>
                   <div className="flex justify-between items-center mb-2.5">
                     <span className="text-[9px] font-mono text-[#888888] tracking-wider uppercase">Session Length:</span>
-                    <div className="flex items-center gap-1.5 font-mono text-zinc-400">
-                      <input 
-                        type="number" 
-                        value={sessionMinutes}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value);
-                          if (isNaN(val)) {
-                            setSessionMinutes("");
-                          } else {
-                            setSessionMinutes(val);
-                            setTimeRemaining(val * 60);
-                          }
-                        }}
-                        className="w-14 premium-input text-zinc-100 text-xs font-bold rounded px-2 py-0.5 outline-none text-right font-mono"
-                        min="1"
-                        max="300"
-                      />
-                      <span>min</span>
+                    <div className="flex items-center gap-2">
+                      {/* Unit Segmented Toggle */}
+                      <div className="flex items-center gap-1 bg-black/60 border border-[#2A2A2A]/80 rounded p-0.5 text-[9px] font-mono">
+                        <button
+                          type="button"
+                          onClick={() => handleUnitChange("min")}
+                          className={`px-1.5 py-0.5 rounded transition-colors ${
+                            timeUnit === "min" 
+                              ? "bg-white text-black font-bold" 
+                              : "text-[#888888] hover:text-white"
+                          }`}
+                        >
+                          MIN
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleUnitChange("hrs")}
+                          className={`px-1.5 py-0.5 rounded transition-colors ${
+                            timeUnit === "hrs" 
+                              ? "bg-white text-black font-bold" 
+                              : "text-[#888888] hover:text-white"
+                          }`}
+                        >
+                          HRS
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 font-mono text-zinc-400">
+                        <input 
+                          id="session-length-input"
+                          type="number" 
+                          step={timeUnit === "min" ? "1" : "0.1"}
+                          value={inputValue}
+                          onChange={(e) => {
+                            const valStr = e.target.value;
+                            setInputValue(valStr);
+                            
+                            if (valStr === "") {
+                              setSessionMinutes("");
+                            } else {
+                              const numericVal = parseFloat(valStr);
+                              if (!isNaN(numericVal)) {
+                                if (timeUnit === "min") {
+                                  const mins = Math.round(numericVal);
+                                  setSessionMinutes(mins);
+                                  setTimeRemaining(mins * 60);
+                                } else {
+                                  const mins = Math.round(numericVal * 60);
+                                  setSessionMinutes(mins);
+                                  setTimeRemaining(mins * 60);
+                                }
+                              }
+                            }
+                          }}
+                          className="w-14 premium-input text-zinc-100 text-xs font-bold rounded px-2 py-0.5 outline-none text-right font-mono"
+                          min={timeUnit === "min" ? "1" : "0.1"}
+                          max={timeUnit === "min" ? "300" : "5.0"}
+                        />
+                        <span className="text-[10px] lowercase text-[#888888]">{timeUnit}</span>
+                      </div>
                     </div>
                   </div>
-                  <input
-                    type="range"
-                    min="5"
-                    max="120"
-                    step="5"
-                    value={sessionMinutes === "" ? 25 : (sessionMinutes <= 120 ? sessionMinutes : 120)}
-                    onChange={(e) => {
-                      const mins = parseInt(e.target.value);
-                      setSessionMinutes(mins);
-                      setTimeRemaining(mins * 60);
-                    }}
-                    className="w-full accent-zinc-250 cursor-pointer h-1.5 bg-zinc-900 rounded-lg appearance-none mt-2"
-                  />
-                  <div className="flex justify-between text-[8px] font-mono text-[#666666] mt-2 lowercase">
-                    <span>5m (micro)</span>
-                    <span>25m (steady)</span>
-                    <span>60m (deep)</span>
-                    <span>120m (limit)</span>
-                  </div>
+
+                  {timeUnit === "min" ? (
+                    <input
+                      type="range"
+                      min="5"
+                      max="120"
+                      step="5"
+                      value={sessionMinutes === "" ? 25 : (sessionMinutes <= 120 ? sessionMinutes : 120)}
+                      onChange={(e) => {
+                        const mins = parseInt(e.target.value);
+                        setSessionMinutes(mins);
+                        setTimeRemaining(mins * 60);
+                      }}
+                      className="w-full accent-zinc-250 cursor-pointer h-1.5 bg-zinc-900 rounded-lg appearance-none mt-2"
+                    />
+                  ) : (
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="5.0"
+                      step="0.1"
+                      value={sessionMinutes === "" ? 0.4 : Math.min(5.0, Math.round((sessionMinutes / 60) * 10) / 10)}
+                      onChange={(e) => {
+                        const hrs = parseFloat(e.target.value);
+                        const mins = Math.round(hrs * 60);
+                        setSessionMinutes(mins);
+                        setTimeRemaining(mins * 60);
+                      }}
+                      className="w-full accent-zinc-250 cursor-pointer h-1.5 bg-zinc-900 rounded-lg appearance-none mt-2"
+                    />
+                  )}
+
+                  {timeUnit === "min" ? (
+                    <div className="flex justify-between text-[8px] font-mono text-[#666666] mt-2 lowercase">
+                      <span>5m (micro)</span>
+                      <span>25m (steady)</span>
+                      <span>60m (deep)</span>
+                      <span>120m (limit)</span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between text-[8px] font-mono text-[#666666] mt-2 lowercase">
+                      <span>0.1h (micro)</span>
+                      <span>0.5h (steady)</span>
+                      <span>1.0h (deep)</span>
+                      <span>5.0h (limit)</span>
+                    </div>
+                  )}
                 </div>
 
                 {sessionMode === "interval" && (
@@ -604,20 +734,20 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
             exit={{ opacity: 0 }}
             className="space-y-6"
           >
-            <div className="space-y-2 text-center sm:text-left">
-              <span className="inline-flex flex-col items-center justify-center px-4 py-1.5 rounded border border-[#2A2A2A] text-[9px] text-[#888888] font-mono tracking-widest uppercase mb-4">
+            <div className="space-y-2 text-left bg-[#121212]/80 backdrop-blur-md pt-12 pb-3 pr-4 pl-8 border border-[#2A2A2A]/80 rotate-[-2deg] mb-4 relative z-10">
+              <span className="inline-flex px-3 py-1 rounded bg-black border border-[#2A2A2A]/80 text-[9px] text-white font-mono tracking-widest uppercase mb-4 shadow-[2px_2px_0px_#2A2A2A]">
                 Initialize Vector
               </span>
-              <h2 className="text-2xl font-medium tracking-tight text-white leading-tight mt-2.5">
+              <h2 className="text-4xl font-black uppercase tracking-tighter text-white leading-[0.85] mt-2.5">
                 What is the first molecular step?
               </h2>
-              <p className="text-[#666666] text-xs sm:text-sm">
+              <p className="text-[#888888] font-mono tracking-[0.1em] text-[9px] uppercase mt-4">
                 Name an action that requires less than 60 seconds of effort.
               </p>
             </div>
 
             {/* Input entry */}
-            <div className="space-y-4">
+            <div className="space-y-4 bg-black/80 backdrop-blur-md p-6 border border-[#2A2A2A]/80 rotate-[1deg] relative z-20">
               <input
                 type="text"
                 value={tinyStep}
@@ -646,7 +776,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                   className="flex-1 h-14 bg-white hover:bg-[#F0F0F0] text-black rounded font-medium tracking-wide transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm"
                 >
                   <Clock className="w-4 h-4 shrink-0" />
-                  Init Sequence ({sessionMinutes}m)
+                  Init Sequence ({formatSessionMinutes(sessionMinutes)})
                 </button>
               </div>
             </div>
@@ -660,101 +790,157 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex flex-col items-center justify-center space-y-9 py-4"
+            className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 md:space-y-9 py-2 sm:py-4"
           >
             {/* Spotlight layout Header */}
-            <div className="text-center space-y-2 max-w-sm">
+            <div className="text-center space-y-1.5 sm:space-y-2 max-w-sm bg-[#121212]/80 backdrop-blur-md pt-6 sm:pt-10 pr-4 pb-2.5 sm:pb-3 pl-6 sm:pl-8 border border-[#2A2A2A]/80 rotate-[1.5deg] relative z-10 -mb-3 sm:-mb-4 shadow-[4px_4px_0px_rgba(0,0,0,0.4)]">
               <span className="text-[9px] font-mono text-[#888888] uppercase tracking-[0.25em] block">Target</span>
-              <h2 className="text-lg font-medium text-white line-clamp-1">{taskName}</h2>
+              <h2 className="text-xl sm:text-2xl font-black text-white line-clamp-2 uppercase tracking-tighter leading-[0.85]">{taskName}</h2>
               {sessionMode === "interval" && (
                 <div className="text-[10px] font-mono text-[#666666]">
                   Cycle {currentInterval} / {intervalCount}
                 </div>
               )}
               {focusState !== "interval_break" && (
-                <div className="bg-[#121212] border border-[#2A2A2A] py-2 px-3 rounded inline-flex items-center gap-1.5 text-[11px] text-[#AAAAAA] mt-2 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
+                <div className="bg-black border border-[#2A2A2A]/80 py-1.5 sm:py-2 px-2.5 sm:px-3 rounded-none inline-flex items-center gap-1.5 text-[10px] text-[#AAAAAA] mt-1 sm:mt-2 font-mono rotate-[-1deg]">
+                  <span className="w-1.5 h-1.5 bg-white shrink-0" />
                   <span>Step:</span>
-                  <span className="text-white truncate font-sans max-w-[200px]">{tinyStep}</span>
+                  <span className="text-white truncate font-sans max-w-[150px] sm:max-w-[200px]">{tinyStep}</span>
                 </div>
               )}
             </div>
 
             {/* Timer circle visualization */}
-            <div className="relative w-56 h-56 flex items-center justify-center">
+            <div className="relative w-48 h-48 sm:w-60 sm:h-60 md:w-64 md:h-64 flex items-center justify-center bg-black/80 backdrop-blur-md border border-[#2A2A2A]/80 rotate-[-1.5deg] z-20 p-2">
 
               {/* Progress Ring */}
-              <svg className="absolute w-full h-full transform -rotate-90">
+              <svg className="absolute w-[90%] h-[90%] transform -rotate-90" viewBox="0 0 100 100">
                 <circle
-                  cx="112"
-                  cy="112"
-                  r="108"
+                  cx="50"
+                  cy="50"
+                  r="45"
                   className="stroke-[#1A1A1A] fill-none"
                   strokeWidth="1"
                 />
                 <circle
-                  cx="112"
-                  cy="112"
-                  r="108"
+                  cx="50"
+                  cy="50"
+                  r="45"
                   className="stroke-white fill-none transition-all duration-1000 ease-linear"
-                  strokeWidth="2"
-                  strokeDasharray={2 * Math.PI * 108}
-                  strokeDashoffset={2 * Math.PI * 108 * (1 - progressRatio)}
-
-                  strokeLinecap="round"
+                  strokeWidth="3"
+                  strokeDasharray={2 * Math.PI * 45}
+                  strokeDashoffset={2 * Math.PI * 45 * (1 - progressRatio)}
+                  strokeLinecap="square"
                 />
               </svg>
 
               {/* Central Time Indicators */}
               <div className="text-center space-y-1 relative z-10 flex flex-col items-center">
-                <span className="text-4xl font-medium tracking-tight text-white font-mono leading-none">
+                <span className="text-4xl sm:text-5xl font-black tracking-tighter text-white font-mono leading-[0.85]">
                   {formatTime(timeRemaining)}
                 </span>
-                <span className="text-[10px] font-mono text-[#666666] uppercase pt-2">
+                <span className="text-[8px] sm:text-[10px] font-mono text-[#666666] tracking-[0.2em] uppercase pt-1.5 sm:pt-3">
                   {focusState === "interval_break" ? "INTERVAL BREAK" : focusState === "focusing" ? "DEEP FOCUS" : "FLOW PAUSED"}
                 </span>
               </div>
             </div>
 
+            {/* Add Time Area */}
+            {(focusState === "focusing" || focusState === "paused") && (
+              <div className="w-full flex flex-col items-center">
+                {!showAddTime ? (
+                  <button 
+                    onClick={() => setShowAddTime(true)}
+                    className="text-[10px] text-[#666666] hover:text-white transition-colors uppercase tracking-widest font-mono cursor-pointer"
+                  >
+                    + Add Time
+                  </button>
+                ) : (
+                  <div className="flex gap-2 items-center bg-[#121212] border border-[#2A2A2A] rounded p-1.5">
+                    <button onClick={() => handleAddTime(5)} className="px-3 py-1 bg-[#1A1A1A] hover:bg-[#2A2A2A] rounded text-[10px] text-white cursor-pointer transition-colors">5m</button>
+                    <button onClick={() => handleAddTime(10)} className="px-3 py-1 bg-[#1A1A1A] hover:bg-[#2A2A2A] rounded text-[10px] text-white cursor-pointer transition-colors">10m</button>
+                    <div className="flex items-center gap-1">
+                      <input 
+                        type="number" 
+                        value={customAddMins} 
+                        onChange={(e) => setCustomAddMins(e.target.value)}
+                        placeholder="Mins" 
+                        className="w-14 h-6 bg-[#0A0A0A] border border-[#2A2A2A] rounded px-2 text-[10px] text-white outline-none"
+                      />
+                      <button 
+                        onClick={() => { if(parseInt(customAddMins)>0) handleAddTime(parseInt(customAddMins)) }} 
+                        className="px-2 py-1 text-[10px] text-[#888888] hover:text-white cursor-pointer transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    <button onClick={() => setShowAddTime(false)} className="px-2 py-1 text-[10px] text-[#666666] hover:text-white ml-1 cursor-pointer transition-colors">✕</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Recovery / stuck options list */}
-            <div className="w-full space-y-4">
+            <div className="w-full space-y-2 sm:space-y-4">
               
               {/* Core Control Group */}
-              <div className="flex gap-2.5 justify-center">
+              <div className="flex flex-wrap gap-1.5 xs:gap-2.5 justify-center">
                 {focusState === "interval_break" ? (
                   <button
                     onClick={() => {
                       setFocusState("focusing");
-                      setTimeRemaining(sessionMinutes * 60);
+                      setTimeRemaining((typeof sessionMinutes === 'number' ? sessionMinutes : 25) * 60);
                       playStartSound();
                     }}
-                    className="flex-1 max-w-[130px] h-11 bg-white hover:bg-[#F0F0F0] text-black rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-xs font-medium font-sans"
+                    className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-white hover:bg-[#F0F0F0] text-black rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
                   >
                     <Play className="w-3.5 h-3.5 shrink-0" />
                     Skip Break
                   </button>
                 ) : focusState === "focusing" ? (
-                  <button
-                    onClick={() => handlePauseToggle()}
-                    className="flex-1 max-w-[130px] h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-xs font-medium font-sans"
-                  >
-                    <Pause className="w-3.5 h-3.5 shrink-0" />
-                    Pause
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handlePauseToggle()}
+                      className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
+                    >
+                      <Pause className="w-3.5 h-3.5 shrink-0" />
+                      Pause
+                    </button>
+                    {sessionMode === "single" && (
+                      <button
+                        onClick={() => setFocusState("guilt_free_break")}
+                        className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-[#888888] hover:text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
+                      >
+                        <HeartHandshake className="w-3.5 h-3.5 shrink-0" />
+                        Take Break
+                      </button>
+                    )}
+                  </>
                 ) : (
-                  <button
-                    onClick={() => handlePauseToggle()}
-                    className="flex-1 max-w-[130px] h-11 bg-white hover:bg-[#F0F0F0] text-black rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-xs font-medium font-sans"
-                  >
-                    <Play className="w-3.5 h-3.5 shrink-0" />
-                    Resume
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handlePauseToggle()}
+                      className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-white hover:bg-[#F0F0F0] text-black rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
+                    >
+                      <Play className="w-3.5 h-3.5 shrink-0" />
+                      Resume
+                    </button>
+                    {sessionMode === "single" && (
+                      <button
+                        onClick={() => setFocusState("guilt_free_break")}
+                        className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-[#888888] hover:text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
+                      >
+                        <HeartHandshake className="w-3.5 h-3.5 shrink-0" />
+                        Take Break
+                      </button>
+                    )}
+                  </>
                 )}
 
                 <button
                   onClick={() => handleStuckRescue()}
                   id="trigger-stuck-btn"
-                  className="flex-1 max-w-[130px] h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-[#888888] hover:text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-xs font-medium font-sans"
+                  className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-[#888888] hover:text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
                 >
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   Signal Stuck
@@ -763,7 +949,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 <button
                   onClick={handleCompleteSession}
                   id="mock-finish-session-btn"
-                  className="flex-1 max-w-[110px] h-11 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-xs font-sans"
+                  className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-sans"
                 >
                   <Check className="w-3.5 h-3.5 shrink-0" />
                   Conclude
@@ -942,44 +1128,52 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
-            className="flex flex-col items-center justify-center space-y-10 py-6"
+            className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 md:space-y-10 py-2 sm:py-6"
           >
-            <div className="text-center space-y-2 max-w-sm">
-              <h3 className="text-[10px] font-mono text-[#888888] uppercase tracking-widest block">Rest Window</h3>
-              <h2 className="text-xl font-medium text-white line-clamp-1">Resting Mindscape</h2>
-              <p className="text-xs text-[#666666]">
+            <div className="text-center space-y-1.5 sm:space-y-2 max-w-sm bg-[#121212]/80 backdrop-blur-md pt-6 sm:pt-10 pr-4 pb-2.5 sm:pb-3 pl-6 sm:pl-8 border border-[#2A2A2A]/80 rotate-[2deg] relative z-10 -mb-3 sm:-mb-4 shadow-[4px_4px_0px_rgba(0,0,0,0.4)]">
+              <h3 className="text-[9px] font-mono text-[#888888] uppercase tracking-[0.25em] block">Rest Window</h3>
+              <h2 className="text-xl sm:text-2xl font-black text-white line-clamp-1 uppercase tracking-tighter leading-[0.85]">Resting Mindscape</h2>
+              <p className="text-[9px] text-[#666666] font-mono tracking-[0.1em] uppercase mt-2">
                 Active flow paused. Protect your space, take a breath, or look away from the screens.
               </p>
             </div>
 
             {/* Timer circle visualization */}
-            <div className="relative w-64 h-64 flex items-center justify-center">
+            <div className="relative w-48 h-48 sm:w-60 sm:h-60 md:w-64 md:h-64 flex items-center justify-center bg-black/80 backdrop-blur-md border border-[#2A2A2A]/80 rotate-[-1deg] z-20 p-2">
               {/* Progress Circle SVG */}
-              <svg className="absolute w-full h-full transform -rotate-90">
-                <circle
-                  cx="128"
-                  cy="128"
-                  r="112"
-                  className="stroke-[#1A1A1A] fill-none"
-                  strokeWidth="1"
-                />
-                <circle
-                  cx="128"
-                  cy="128"
-                  r="112"
-                  className="stroke-white fill-none transition-all duration-1000 ease-linear"
-                  strokeWidth="2"
-                  strokeDasharray={2 * Math.PI * 112}
-                  strokeDashoffset={2 * Math.PI * 112 * (1 - (guiltFreeRemaining / (5 * 60)))}
-                  strokeLinecap="round"
-                />
-              </svg>
+              {sessionMode !== "single" && (
+                <svg className="absolute w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="44"
+                    className="stroke-[#1A1A1A] fill-none"
+                    strokeWidth="1"
+                  />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="44"
+                    className="stroke-white fill-none transition-all duration-1000 ease-linear"
+                    strokeWidth="2"
+                    strokeDasharray={2 * Math.PI * 44}
+                    strokeDashoffset={2 * Math.PI * 44 * (1 - (guiltFreeRemaining / (5 * 60)))}
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
 
               {/* Central Time Indicators */}
               <div className="text-center space-y-1 relative z-10 flex flex-col items-center">
-                <span className="text-5xl font-sans font-light text-white tracking-tight font-mono">
-                  {formatTime(guiltFreeRemaining)}
-                </span>
+                {sessionMode !== "single" ? (
+                  <span className="text-4xl sm:text-5xl font-sans font-light text-white tracking-tight font-mono">
+                    {formatTime(guiltFreeRemaining)}
+                  </span>
+                ) : (
+                  <span className="text-lg sm:text-xl font-sans font-medium text-[#888888]">
+                    Paused
+                  </span>
+                )}
               </div>
             </div>
 
@@ -988,7 +1182,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 onClick={() => {
                   setFocusState("focusing");
                 }}
-                className="flex-1 max-w-[180px] h-12 bg-zinc-100 hover:bg-white text-zinc-950 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 text-xs font-semibold"
+                className="flex-1 max-w-[180px] h-10 sm:h-12 bg-white hover:bg-[#F0F0F0] text-black rounded transition-colors cursor-pointer flex items-center justify-center gap-2 text-xs font-medium"
               >
                 <Play className="w-3.5 h-3.5" />
                 Return to Focus
@@ -1005,46 +1199,40 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
             animate={{ opacity: 1, scale: 1 }}
             className="space-y-6"
           >
-            <div className="space-y-2 block text-center sm:text-left">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-[#2A2A2A] text-[9px] text-[#888888] font-mono tracking-wider uppercase">
+            <div className="space-y-2 block text-left bg-[#121212]/80 backdrop-blur-md pt-12 pr-4 pb-3 pl-8 border border-[#2A2A2A]/80 rotate-[-1.5deg] relative z-10 mb-4">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-black border border-[#2A2A2A]/80 text-[9px] text-white font-mono tracking-widest uppercase mb-4 shadow-[2px_2px_0px_#2A2A2A]">
                 SESSION REFLECTION
               </div>
-              <h2 className="text-2xl font-sans font-medium text-white tracking-tight mt-2">
+              <h2 className="text-4xl font-black uppercase tracking-tighter text-white leading-[0.85] mt-2">
                 Nicely done. What progress occurred?
               </h2>
-              <p className="text-[#666666] text-sm">
+              <p className="text-[#888888] font-mono tracking-[0.1em] text-[9px] uppercase mt-4">
                 No matter how small, noting it signals completion to your brain.
               </p>
             </div>
 
-            <div className="space-y-5">
+            <div className="space-y-5 bg-black/80 backdrop-blur-md p-6 border border-[#2A2A2A]/80 rotate-[1deg] relative z-20">
               <div className="space-y-2">
-                <label className="text-[10px] font-mono text-[#888888] block tracking-wider uppercase">WHAT WAS ACCOMPLISHED OR LEARNED? (OPTIONAL)</label>
+                <label className="text-[10px] font-mono text-[#888888] block tracking-wider uppercase">Session Notes (Optional)</label>
                 <textarea
                   value={completedNotes}
                   onChange={(e) => setCompletedNotes(e.target.value)}
                   disabled={isSaving}
-                  placeholder="e.g. Read 5 pages, drafted an email"
+                  placeholder="What did you get done?"
                   id="reflection-completed-input"
-                  className="w-full h-24 p-4 rounded premium-input outline-none text-white placeholder-[#666666] text-sm disabled:opacity-50 resize-none font-sans"
+                  className="w-full h-16 p-3 rounded premium-input outline-none text-white placeholder-[#666666] text-xs disabled:opacity-50 resize-none font-sans"
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-mono text-[#888888] block tracking-wider uppercase">WHAT IS THE VERY FIRST STEP FOR NEXT TIME? (OPTIONAL)</label>
+              <div className="space-y-1">
+                <label className="text-[8px] font-mono text-[#666666] block tracking-wider uppercase">Next Step for next time (Optional)</label>
                 <input
                   type="text"
                   value={nextStepCaptured}
                   onChange={(e) => setNextStepCaptured(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !isSaving) {
-                      handleSaveReflection();
-                    }
-                  }}
                   disabled={isSaving}
-                  placeholder="e.g. Read page 6, Send the proposal"
-                  id="reflection-nextstep-input"
-                  className="w-full h-14 px-4 rounded premium-input outline-none text-white placeholder-[#666666] text-sm disabled:opacity-50 font-sans"
+                  placeholder="e.g. Read page 6"
+                  className="w-full h-8 px-2 rounded outline-none text-[#888888] placeholder-[#444444] text-[10px] disabled:opacity-50 font-sans bg-[#0A0A0A] border border-[#1A1A1A]"
                 />
               </div>
 
@@ -1052,7 +1240,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 disabled={isSaving}
                 onClick={handleSaveReflection}
                 id="save-reflection-btn"
-                className="w-full h-14 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:bg-[#333333] disabled:cursor-not-allowed"
+                className="w-full h-12 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:bg-[#333333] disabled:cursor-not-allowed"
               >
                 {isSaving ? (
                   <>
@@ -1062,7 +1250,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />
-                    Lock in Progress & Reflect
+                    Lock in Progress
                   </>
                 )}
               </button>
@@ -1084,28 +1272,14 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
               </div>
               <h2 className="text-2xl font-medium text-white tracking-tight">Progress Preserved</h2>
               <p className="text-[#666666] text-xs sm:text-sm font-sans max-w-sm mx-auto leading-relaxed">
-                Your future self will thank you. The next step is securely logged so you don't have starting hurdles.
+                Your future self will thank you. The session data is securely logged.
               </p>
             </div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-[#121212] border border-[#2A2A2A] rounded p-5 space-y-4 text-left"
-            >
-              <div>
-                <span className="text-[10px] font-mono text-[#888888] tracking-widest block uppercase">NEXT TIME'S INITIAL STEP:</span>
-                <div className="bg-[#1A1A1A] px-3.5 py-3 rounded border border-[#2A2A2A] flex items-center gap-3 text-sm text-[#CCCCCC] font-sans mt-2">
-                  <CornerDownRight className="w-4 h-4 text-[#888888]" />
-                  <span>{nextStepCaptured}</span>
-                </div>
-              </div>
-            </motion.div>
 
             <button
               onClick={handleResetToIdle}
               id="return-to-dash-btn"
-              className="w-full h-14 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded text-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
+              className="w-full h-14 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded text-sm transition-colors cursor-pointer flex items-center justify-center gap-2 mt-6"
             >
               Start New Focus Space
             </button>

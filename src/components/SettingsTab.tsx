@@ -70,7 +70,7 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
       </div>
 
       {/* User info Profile element */}
-      <div className="p-4 rounded bg-[#121212] border border-[#2A2A2A] flex justify-between items-center">
+      <div className="p-4 rounded bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 flex justify-between items-center">
         <div className="flex items-center gap-3.5 text-left">
           {user && user.photoURL ? (
             <img src={user.photoURL} alt={profile.displayName || "User"} referrerPolicy="no-referrer" className="w-11 h-11 rounded border border-[#2A2A2A]" />
@@ -103,17 +103,17 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
       <div className="space-y-4">
         <h4 className="text-[9px] font-mono text-zinc-500 tracking-[0.25em] font-extrabold uppercase block">COGNITIVE TUNERS</h4>
 
-        <div className="grid gap-4">
+        <div className="grid gap-6">
           
           {/* ADHD Switch block */}
-          <div className="p-5 rounded bg-[#121212] border border-[#2A2A2A] space-y-4 text-left">
+          <div className="p-6 pt-8 pb-4 bg-black border border-[#2A2A2A] rotate-[1.5deg] space-y-4 text-left -ml-2 relative z-10 shadow-[2px_2px_0px_#000000]">
             <div className="flex justify-between items-start gap-4">
               <div className="space-y-1 text-left">
                 <div className="flex items-center gap-2">
                   <Zap className={`w-4 h-4 transition-colors ${profile.adhdMode ? "text-white" : "text-[#888888]"}`} />
-                  <h4 className="text-sm font-medium text-white">Overdrive Focus Mode</h4>
+                  <h4 className="text-xl font-black text-white uppercase tracking-tighter leading-[0.85]">Overdrive Mode</h4>
                 </div>
-                <p className="text-xs text-[#666666] leading-relaxed pt-1.5">
+                <p className="text-[10px] text-[#666666] font-mono tracking-widest uppercase leading-relaxed pt-2">
                   Applies low-friction defaults: 20-minute active sessions, enhanced focus warmth, and high-contrast distraction-shift safety options designed for rapid restart.
                 </p>
               </div>
@@ -122,13 +122,13 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
               <button
                 onClick={handleToggleAdhd}
                 id="toggle-adhd-btn"
-                className={`w-10 h-6 flex items-center rounded-full transition-colors focus:outline-none relative cursor-pointer shrink-0 ${
+                className={`w-10 h-6 flex items-center rounded-none transition-colors focus:outline-none relative cursor-pointer shrink-0 ${
                   profile.adhdMode ? "bg-white" : "bg-[#1A1A1A] border border-[#2A2A2A]"
                 }`}
               >
                 <div
-                  className={`w-4.5 h-4.5 rounded-full transition-all absolute ${
-                    profile.adhdMode ? "right-0.5 bg-black" : "left-0.5 bg-[#888888]"
+                  className={`w-4 h-4 rounded-none transition-all absolute ${
+                    profile.adhdMode ? "right-1 bg-black" : "left-1 bg-[#888888]"
                   }`}
                 />
               </button>
@@ -136,24 +136,24 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
           </div>
 
           {/* Goal adjustment selector list */}
-          <div className="p-5 rounded bg-[#121212] border border-[#2A2A2A] space-y-4 text-left">
+          <div className="p-6 pt-8 pb-4 bg-black border border-[#2A2A2A] rotate-[-1deg] space-y-4 text-left relative z-20 shadow-[2px_2px_0px_#000000]">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-[#888888]" />
-              <h4 className="text-sm font-medium text-white">Weekly Target Allocation</h4>
+              <h4 className="text-xl font-black text-white uppercase tracking-tighter leading-[0.85]">Weekly Allocation</h4>
             </div>
             
-            <p className="text-xs text-[#666666] leading-relaxed mt-1">
+            <p className="text-[10px] text-[#666666] font-mono tracking-widest uppercase leading-relaxed mt-2">
               Set your target duration for mental blocks. We promote manageable, daily consistency rather than exhausting grinds.
             </p>
 
-            <div className="flex flex-wrap gap-2 pt-1">
+            <div className="flex flex-wrap gap-2 pt-2">
               {[60, 150, 300, 600].map((mins) => (
                 <button
                   key={mins}
                   onClick={() => handleUpdateGoal(mins)}
-                  className={`px-3 py-2 text-[10px] sm:text-xs font-medium rounded transition-colors border cursor-pointer ${
+                  className={`px-3 py-2 text-[10px] font-mono uppercase tracking-widest rounded-none transition-colors border cursor-pointer ${
                     profile.weeklyGoalMinutes === mins
-                      ? "bg-white border-white text-black"
+                      ? "bg-white border-white text-black font-bold"
                       : "bg-[#1A1A1A] hover:bg-[#2A2A2A] border-[#2A2A2A] text-[#888888] hover:text-white"
                   }`}
                 >
@@ -164,7 +164,7 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
           </div>
 
           {/* Danger zone block with history deletion and complete factory reset option */}
-          <div className="p-5 rounded bg-[#121212] border border-[#2A2A2A] space-y-4 text-left group">
+          <div className="p-6 pt-8 pb-4 bg-black border border-[#2A2A2A] rotate-[1.5deg] space-y-4 text-left group -ml-2 relative z-10 shadow-[2px_2px_0px_#000000]">
             <div className="flex items-center gap-2">
               <Trash2 className="w-4 h-4 text-[#888888] group-hover:text-white transition-colors" />
               <h4 className="text-sm font-medium text-white transition-colors">Destructive Reset Actions</h4>
@@ -254,7 +254,7 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
       </div>
 
       {/* Trust banner */}
-      <div className="p-4 bg-[#121212] border border-[#2A2A2A] rounded flex gap-3.5 items-start text-left">
+      <div className="p-4 bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 rounded flex gap-3.5 items-start text-left">
         <ShieldCheck className="w-4 h-4 text-[#888888] shrink-0 mt-0.5" />
         <div className="space-y-1">
           <span className="text-[9px] font-mono text-[#888888] uppercase tracking-widest block">SECURITY PROTOCOL</span>
