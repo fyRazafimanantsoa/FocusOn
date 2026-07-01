@@ -467,10 +467,9 @@ export default function App() {
   }
 
   // Auth gate
-  if (!currentUser && !isGuestMode) {
+  if (!currentUser) {
     return (
       <AuthScreen 
-        onGuestAccess={handleGuestAccess} 
         isLoading={isAuthLoading} 
         setIsLoading={setIsAuthLoading} 
       />
