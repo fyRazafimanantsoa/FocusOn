@@ -1,5 +1,5 @@
 import React from "react";
-import { UserProfile } from "../types";
+import { UserProfile, FocusSession, Project } from "../types";
 import { 
   User, 
   Sparkles, 
@@ -10,23 +10,67 @@ import {
   Settings2, 
   Layers, 
   HeartHandshake,
-  ShieldCheck,
-  CircleCheck
+  CircleCheck,
+  Sun,
+  Moon,
+  Download
 } from "lucide-react";
 import { logOut } from "../lib/firebase";
 
 interface SettingsTabProps {
   user: any;
   profile: UserProfile;
+  sessions: FocusSession[];
+  projects: Project[];
   onUpdateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   onSignOut: () => void;
   onDeleteHistory: () => Promise<void>;
   onFactoryReset: () => Promise<void>;
 }
 
-export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut, onDeleteHistory, onFactoryReset }: SettingsTabProps) {
+export default function SettingsTab({ user, profile, sessions, projects, onUpdateProfile, onSignOut, onDeleteHistory, onFactoryReset }: SettingsTabProps) {
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [confirmMode, setConfirmMode] = React.useState<'history' | 'factory' | null>(null);
+
+  const [feedbackName, setFeedbackName] = React.useState("");
+  const [feedbackEmail, setFeedbackEmail] = React.useState("");
+  const [feedbackMessage, setFeedbackMessage] = React.useState("");
+  const [isFeedbackSubmitting, setIsFeedbackSubmitting] = React.useState(false);
+  const [feedbackStatus, setFeedbackStatus] = React.useState<'idle' | 'success' | 'error'>('idle');
+
+  const handleSendFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feedbackName.trim() || !feedbackMessage.trim()) return;
+    setIsFeedbackSubmitting(true);
+    setFeedbackStatus('idle');
+    try {
+      const response = await fetch("/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: feedbackName,
+          email: feedbackEmail,
+          feedback: feedbackMessage,
+          originalUserEmail: user?.email || "unknown@focuson.io",
+        })
+      });
+      if (response.ok) {
+        setFeedbackStatus('success');
+        setFeedbackName('');
+        setFeedbackEmail('');
+        setFeedbackMessage('');
+      } else {
+        setFeedbackStatus('error');
+      }
+    } catch (err) {
+      console.error("Feedback submission error:", err);
+      setFeedbackStatus('error');
+    } finally {
+      setIsFeedbackSubmitting(false);
+    }
+  };
 
   const handleToggleAdhd = async () => {
     try {
@@ -56,33 +100,86 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
     }
   };
 
+  const handleExportCSV = () => {
+    const completed = sessions.filter(s => s.completed);
+    if (completed.length === 0) return;
+    
+    // Header row
+    const headers = ["Date", "Task Name", "Project Name", "Initial Micro-step", "Duration (Minutes)", "Reflection Notes", "Suggested Next Step"];
+    
+    // Data rows
+    const rows = completed.map(s => {
+      const projName = projects.find(p => p.id === s.projectId)?.name || "Projectless";
+      const durationMins = Math.round(s.actualDurationSeconds / 60);
+      const cleanedReflection = s.reflectionNotes ? s.reflectionNotes.replace(/"/g, '""') : "";
+      const cleanedTinyStep = s.tinyStep ? s.tinyStep.replace(/"/g, '""') : "";
+      const cleanedNextStep = s.nextStepSuggested ? s.nextStepSuggested.replace(/"/g, '""') : "";
+      
+      return [
+        s.dateStr,
+        `"${s.taskName.replace(/"/g, '""')}"`,
+        `"${projName.replace(/"/g, '""')}"`,
+        `"${cleanedTinyStep}"`,
+        durationMins,
+        `"${cleanedReflection}"`,
+        `"${cleanedNextStep}"`
+      ];
+    });
+    
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `focuson_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportJSON = () => {
+    const completed = sessions.filter(s => s.completed);
+    if (completed.length === 0) return;
+    
+    const blob = new Blob([JSON.stringify(completed, null, 2)], { type: "application/json;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", url);
+    downloadAnchor.setAttribute("download", `focuson_export_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    document.body.removeChild(downloadAnchor);
+  };
+
+  const currentTheme = profile.theme || "dark";
+
   return (
     <div className="w-full max-w-xl mx-auto py-4 px-1 space-y-7 animate-fade-in" id="settings-tab-viewport">
       
       {/* Title block */}
       <div className="space-y-1.5 text-center sm:text-left">
-        <h2 className="text-2xl font-bold tracking-tight text-white">
-          System Control Panel
+        <h2 className="text-2xl font-bold tracking-tight text-text-primary transition-colors duration-300">
+          System Controls
         </h2>
-        <p className="text-zinc-400 text-xs sm:text-sm">
-          Optimize support algorithms to align with your natural workflows.
+        <p className="text-text-secondary text-xs sm:text-sm transition-colors duration-300">
+          Tailor your focus settings to match your natural rhythm.
         </p>
       </div>
 
       {/* User info Profile element */}
-      <div className="p-4 rounded bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 flex justify-between items-center">
+      <div className="p-4 rounded bg-bg-panel border border-border-app flex justify-between items-center transition-colors duration-300 shadow-[0_4px_20px_var(--shadow-intensity)]">
         <div className="flex items-center gap-3.5 text-left">
           {user && user.photoURL ? (
-            <img src={user.photoURL} alt={profile.displayName || "User"} referrerPolicy="no-referrer" className="w-11 h-11 rounded border border-[#2A2A2A]" />
+            <img src={user.photoURL} alt={profile.displayName || "User"} referrerPolicy="no-referrer" className="w-11 h-11 rounded border border-border-app" />
           ) : (
-            <div className="w-11 h-11 rounded bg-[#1A1A1A] border border-[#2A2A2A] flex items-center justify-center">
-              <User className="w-5 h-5 text-[#888888]" />
+            <div className="w-11 h-11 rounded bg-bg-btn border border-border-app flex items-center justify-center transition-colors duration-300">
+              <User className="w-5 h-5 text-text-muted" />
             </div>
           )}
           <div className="text-left">
-            <h3 className="text-xs sm:text-sm font-medium text-white leading-none">{user ? user.displayName : "Sandbox Visitor"}</h3>
-            <p className="text-[10px] font-mono text-[#666666] mt-1">{user ? user.email : "guest@focuson.io"}</p>
-            <span className="inline-block mt-2 px-2 py-0.5 rounded bg-[#1A1A1A] border border-[#2A2A2A] text-[8px] font-mono text-[#888888] uppercase tracking-wider">
+            <h3 className="text-xs sm:text-sm font-medium text-text-primary leading-none transition-colors duration-300">{user ? user.displayName : "Sandbox Visitor"}</h3>
+            <p className="text-[10px] font-mono text-text-muted mt-1 transition-colors duration-300">{user ? user.email : "guest@focuson.io"}</p>
+            <span className="inline-block mt-2 px-2 py-0.5 rounded bg-bg-btn border border-border-app text-[8px] font-mono text-text-secondary uppercase tracking-wider transition-colors duration-300">
               {user ? "Cloud Sync active" : "Guest Mode only"}
             </span>
           </div>
@@ -91,7 +188,7 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
         <button
           onClick={handleLogOutClick}
           id="logout-btn"
-          className="px-3 py-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#2A2A2A] text-[#888888] hover:text-white rounded transition-colors cursor-pointer text-[11px] font-medium flex items-center gap-1.5"
+          className="px-3 py-2 bg-bg-btn hover:bg-bg-btn-hover border border-border-app text-text-secondary hover:text-text-primary rounded transition-all cursor-pointer text-[11px] font-medium flex items-center gap-1.5"
           title="Sign out of current account"
         >
           <LogOut className="w-3.5 h-3.5" />
@@ -101,164 +198,258 @@ export default function SettingsTab({ user, profile, onUpdateProfile, onSignOut,
 
       {/* Control cards container */}
       <div className="space-y-4">
-        <h4 className="text-[9px] font-mono text-zinc-500 tracking-[0.25em] font-extrabold uppercase block">COGNITIVE TUNERS</h4>
+        <h4 className="text-[9px] font-mono text-text-muted tracking-[0.25em] font-extrabold uppercase block transition-colors duration-300">ADHD & FLOW OPTIONS</h4>
 
-        <div className="grid gap-6">
-          
-          {/* ADHD Switch block */}
-          <div className="p-6 pt-8 pb-4 bg-black border border-[#2A2A2A] rotate-[1.5deg] space-y-4 text-left -ml-2 relative z-10 shadow-[2px_2px_0px_#000000]">
-            <div className="flex justify-between items-start gap-4">
-              <div className="space-y-1 text-left">
-                <div className="flex items-center gap-2">
-                  <Zap className={`w-4 h-4 transition-colors ${profile.adhdMode ? "text-white" : "text-[#888888]"}`} />
-                  <h4 className="text-xl font-black text-white uppercase tracking-tighter leading-[0.85]">Overdrive Mode</h4>
+        <div className="space-y-5">
+          {/* Main Control Panel */}
+          <div className="p-4 sm:p-5 bg-bg-card border border-border-app rounded-lg shadow-[2px_2px_0px_var(--border-app)] space-y-4 text-left transition-all duration-300">
+            
+            {/* Theme Selector - Row 1 */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border-app/40">
+              <div className="space-y-0.5 max-w-sm">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-text-muted" />
+                  <h5 className="text-[11px] font-mono uppercase tracking-widest text-text-primary font-bold">Visual Atmosphere</h5>
                 </div>
-                <p className="text-[10px] text-[#666666] font-mono tracking-widest uppercase leading-relaxed pt-2">
-                  Applies low-friction defaults: 20-minute active sessions, enhanced focus warmth, and high-contrast distraction-shift safety options designed for rapid restart.
+                <p className="text-[10px] text-text-muted leading-relaxed">
+                  Protect optical endurance with custom-balanced theme layouts.
+                </p>
+              </div>
+              
+              <div className="flex gap-1.5 shrink-0">
+                <button
+                  onClick={() => onUpdateProfile({ theme: "dark" })}
+                  className={`px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded transition-all border cursor-pointer flex items-center gap-1.5 ${
+                    currentTheme === "dark"
+                      ? "bg-text-primary border-text-primary text-bg-app font-bold"
+                      : "bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  <Moon className="w-3 h-3" />
+                  <span>Dark</span>
+                </button>
+                <button
+                  onClick={() => onUpdateProfile({ theme: "light" })}
+                  className={`px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded transition-all border cursor-pointer flex items-center gap-1.5 ${
+                    currentTheme === "light"
+                      ? "bg-text-primary border-text-primary text-bg-app font-bold"
+                      : "bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  <Sun className="w-3 h-3" />
+                  <span>Light</span>
+                </button>
+              </div>
+            </div>
+
+            {/* ADHD Overdrive Mode - Row 2 */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border-app/40">
+              <div className="space-y-0.5 max-w-sm">
+                <div className="flex items-center gap-1.5">
+                  <Zap className={`w-3.5 h-3.5 transition-colors ${profile.adhdMode ? "text-text-primary" : "text-text-muted"}`} />
+                  <h5 className="text-[11px] font-mono uppercase tracking-widest text-text-primary font-bold">Overdrive Mode (ADHD)</h5>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed">
+                  Low-friction defaults, warm active visual elements, and quick restarts.
                 </p>
               </div>
 
-              {/* High-Fidelity switch */}
               <button
                 onClick={handleToggleAdhd}
                 id="toggle-adhd-btn"
-                className={`w-10 h-6 flex items-center rounded-none transition-colors focus:outline-none relative cursor-pointer shrink-0 ${
-                  profile.adhdMode ? "bg-white" : "bg-[#1A1A1A] border border-[#2A2A2A]"
+                className={`w-9 h-5.5 flex items-center rounded-full transition-all focus:outline-none relative cursor-pointer shrink-0 ${
+                  profile.adhdMode ? "bg-text-primary" : "bg-bg-btn border border-border-app"
                 }`}
               >
                 <div
-                  className={`w-4 h-4 rounded-none transition-all absolute ${
-                    profile.adhdMode ? "right-1 bg-black" : "left-1 bg-[#888888]"
+                  className={`w-3.5 h-3.5 rounded-full transition-all absolute ${
+                    profile.adhdMode ? "right-0.5 bg-bg-app" : "left-0.5 bg-text-muted"
                   }`}
                 />
               </button>
             </div>
-          </div>
 
-          {/* Goal adjustment selector list */}
-          <div className="p-6 pt-8 pb-4 bg-black border border-[#2A2A2A] rotate-[-1deg] space-y-4 text-left relative z-20 shadow-[2px_2px_0px_#000000]">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#888888]" />
-              <h4 className="text-xl font-black text-white uppercase tracking-tighter leading-[0.85]">Weekly Allocation</h4>
+            {/* Weekly Allocation Goal - Row 3 */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border-app/40">
+              <div className="space-y-0.5 max-w-sm">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-text-muted" />
+                  <h5 className="text-[11px] font-mono uppercase tracking-widest text-text-primary font-bold">Weekly Allocation</h5>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed">
+                  Allocation for mental blocks. Promotes healthy consistency.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-1 shrink-0">
+                {[60, 150, 300, 600].map((mins) => (
+                  <button
+                    key={mins}
+                    onClick={() => handleUpdateGoal(mins)}
+                    className={`px-2 py-1 text-[9px] font-mono uppercase tracking-tight rounded transition-all border cursor-pointer ${
+                      profile.weeklyGoalMinutes === mins
+                        ? "bg-text-primary border-text-primary text-bg-app font-bold"
+                        : "bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    {mins === 60 ? "1h" : mins === 150 ? "2.5h" : mins === 300 ? "5h" : "10h"}
+                  </button>
+                ))}
+              </div>
             </div>
-            
-            <p className="text-[10px] text-[#666666] font-mono tracking-widest uppercase leading-relaxed mt-2">
-              Set your target duration for mental blocks. We promote manageable, daily consistency rather than exhausting grinds.
-            </p>
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              {[60, 150, 300, 600].map((mins) => (
+            {/* Export Focus Logs - Row 4 */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5 max-w-sm">
+                <div className="flex items-center gap-1.5">
+                  <Download className="w-3.5 h-3.5 text-text-muted" />
+                  <h5 className="text-[11px] font-mono uppercase tracking-widest text-text-primary font-bold">Export Focus Logs</h5>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed">
+                  Download personal focus session draft indices.
+                </p>
+              </div>
+
+              <div className="flex gap-1.5 shrink-0">
                 <button
-                  key={mins}
-                  onClick={() => handleUpdateGoal(mins)}
-                  className={`px-3 py-2 text-[10px] font-mono uppercase tracking-widest rounded-none transition-colors border cursor-pointer ${
-                    profile.weeklyGoalMinutes === mins
-                      ? "bg-white border-white text-black font-bold"
-                      : "bg-[#1A1A1A] hover:bg-[#2A2A2A] border-[#2A2A2A] text-[#888888] hover:text-white"
-                  }`}
+                  onClick={handleExportCSV}
+                  disabled={sessions.length === 0}
+                  className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider rounded transition-all border cursor-pointer flex-1 flex items-center justify-center gap-1 bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  {mins === 60 ? "1h (Gentle)" : mins === 150 ? "2.5h (Steady)" : mins === 300 ? "5h (Deep)" : "10h (Intense)"}
+                  <span>CSV</span>
                 </button>
-              ))}
+                <button
+                  onClick={handleExportJSON}
+                  disabled={sessions.length === 0}
+                  className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider rounded transition-all border cursor-pointer flex-1 flex items-center justify-center gap-1 bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <span>JSON</span>
+                </button>
+              </div>
             </div>
+
           </div>
 
-          {/* Danger zone block with history deletion and complete factory reset option */}
-          <div className="p-6 pt-8 pb-4 bg-black border border-[#2A2A2A] rotate-[1.5deg] space-y-4 text-left group -ml-2 relative z-10 shadow-[2px_2px_0px_#000000]">
-            <div className="flex items-center gap-2">
-              <Trash2 className="w-4 h-4 text-[#888888] group-hover:text-white transition-colors" />
-              <h4 className="text-sm font-medium text-white transition-colors">Destructive Reset Actions</h4>
-            </div>
+          {/* Danger Zone & Customer Feedback - Side-by-side or stacked cleanly */}
+          <div className="grid gap-4 sm:grid-cols-2">
             
-            <p className="text-xs text-[#666666] leading-relaxed mt-1">
-              Select an action to purge your mental sandbox database records, session timers, next step projections, and focus settings preferences.
-            </p>
+            {/* Compact Danger Zone Card */}
+            <div className="p-4 bg-bg-card border border-border-app rounded-lg shadow-[2px_2px_0px_var(--border-app)] text-left flex flex-col justify-between transition-all duration-300">
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Trash2 className="w-3.5 h-3.5 text-text-muted" />
+                  <h5 className="text-xs font-mono uppercase tracking-widest text-text-primary font-bold">Danger Zone</h5>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed mb-3">
+                  Reset custom settings, clean session logs, and restore configurations to default states.
+                </p>
+              </div>
 
-            <div className="pt-2">
-              {confirmMode === 'history' ? (
-                <div className="space-y-2 p-3 bg-[#1A1A1A] border border-[#2A2A2A] rounded">
-                  <span className="text-[9px] font-mono text-white block uppercase">CONFIRM SESSIONS PURGE</span>
-                  <p className="text-[11px] text-[#666666] leading-relaxed">
-                    This will permanently clear all focus blocks and analytics logs.
-                  </p>
-                  <div className="flex gap-2 pt-1">
+              <div className="pt-2 border-t border-border-app/40">
+                {confirmMode === 'history' ? (
+                  <div className="space-y-2 p-2 bg-bg-btn border border-border-app rounded">
+                    <span className="text-[9px] font-mono text-text-primary block uppercase">CONFIRM SESSIONS PURGE</span>
+                    <div className="flex gap-1.5 pt-1">
+                      <button
+                        onClick={async () => {
+                          setIsDeleting(true);
+                          await onDeleteHistory();
+                          setIsDeleting(false);
+                          setConfirmMode(null);
+                        }}
+                        disabled={isDeleting}
+                        className="px-2.5 py-1 text-[9px] font-mono uppercase tracking-wider rounded transition-colors border cursor-pointer bg-text-primary border-text-primary text-bg-app disabled:opacity-50"
+                      >
+                        {isDeleting ? "..." : "Wipe Logs"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmMode(null)}
+                        disabled={isDeleting}
+                        className="px-2.5 py-1 text-[9px] font-mono uppercase tracking-wider rounded transition-colors border cursor-pointer bg-transparent hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : confirmMode === 'factory' ? (
+                  <div className="space-y-2 p-2 bg-bg-btn border border-border-app rounded">
+                    <span className="text-[9px] font-mono text-text-primary block uppercase">CONFIRM FACTORY RESET</span>
+                    <div className="flex gap-1.5 pt-1">
+                      <button
+                        onClick={async () => {
+                          setIsDeleting(true);
+                          await onFactoryReset();
+                          setIsDeleting(false);
+                          setConfirmMode(null);
+                        }}
+                        disabled={isDeleting}
+                        className="px-2.5 py-1 text-[9px] font-mono uppercase tracking-wider rounded transition-colors border cursor-pointer bg-text-primary border-text-primary text-bg-app disabled:opacity-50"
+                      >
+                        {isDeleting ? "..." : "Reset All"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmMode(null)}
+                        disabled={isDeleting}
+                        className="px-2.5 py-1 text-[9px] font-mono uppercase tracking-wider rounded transition-colors border cursor-pointer bg-transparent hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-1.5">
                     <button
-                      onClick={async () => {
-                        setIsDeleting(true);
-                        await onDeleteHistory();
-                        setIsDeleting(false);
-                        setConfirmMode(null);
-                      }}
-                      disabled={isDeleting}
-                      className="px-3 py-1.5 text-xs font-medium rounded transition-colors border cursor-pointer bg-white hover:bg-[#F0F0F0] border-white text-black disabled:opacity-50"
+                      onClick={() => setConfirmMode('factory')}
+                      className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider rounded transition-all border cursor-pointer bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-primary flex-1 text-center"
                     >
-                      {isDeleting ? "Resetting..." : "Wipe History Only"}
+                      Factory Reset
                     </button>
                     <button
-                      onClick={() => setConfirmMode(null)}
-                      disabled={isDeleting}
-                      className="px-3 py-1.5 text-xs font-medium rounded transition-colors border cursor-pointer bg-transparent hover:bg-[#121212] border-[#2A2A2A] text-[#888888] hover:text-white disabled:opacity-50"
+                      onClick={() => setConfirmMode('history')}
+                      className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider rounded transition-all border cursor-pointer bg-transparent hover:bg-bg-btn border-border-app text-text-secondary hover:text-text-primary flex-1 text-center"
                     >
-                      Cancel
+                      Clear Logs
                     </button>
                   </div>
-                </div>
-              ) : confirmMode === 'factory' ? (
-                <div className="space-y-2 p-3 bg-[#1A1A1A] border border-[#2A2A2A] rounded">
-                  <span className="text-[9px] font-mono text-white block uppercase">CONFIRM COMPLETE FACTORY RESET</span>
-                  <p className="text-[11px] text-[#666666] leading-relaxed">
-                    This will delete ALL sessions and reset your ADHD control defaults, weekly target configurations, and profile states back to zero.
-                  </p>
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={async () => {
-                        setIsDeleting(true);
-                        await onFactoryReset();
-                        setIsDeleting(false);
-                        setConfirmMode(null);
-                      }}
-                      disabled={isDeleting}
-                      className="px-3 py-1.5 text-xs font-medium rounded transition-colors border cursor-pointer bg-white hover:bg-[#F0F0F0] border-white text-black disabled:opacity-50"
-                    >
-                      {isDeleting ? "Resetting..." : "Purge & Reset Everything"}
-                    </button>
-                    <button
-                      onClick={() => setConfirmMode(null)}
-                      disabled={isDeleting}
-                      className="px-3 py-1.5 text-xs font-medium rounded transition-colors border cursor-pointer bg-transparent hover:bg-[#121212] border-[#2A2A2A] text-[#888888] hover:text-white disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <button
-                    onClick={() => setConfirmMode('factory')}
-                    className="px-4 py-2 text-xs font-medium rounded transition-colors border cursor-pointer bg-[#1A1A1A] hover:bg-[#2A2A2A] border-[#2A2A2A] text-white flex-1 text-center"
-                  >
-                    Full Factory Reset
-                  </button>
-                  <button
-                    onClick={() => setConfirmMode('history')}
-                    className="px-4 py-2 text-xs font-medium rounded transition-colors border cursor-pointer bg-transparent hover:bg-[#1A1A1A] border-[#2A2A2A] text-[#888888] hover:text-white flex-1 text-center"
-                  >
-                    Clear System History
-                  </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
+
+            {/* Compact Feedback Card */}
+            <div className="p-4 bg-bg-card border border-border-app rounded-lg shadow-[2px_2px_0px_var(--border-app)] text-left flex flex-col justify-between transition-all duration-300" id="feedback-section">
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <HeartHandshake className="w-3.5 h-3.5 text-text-muted" />
+                  <h5 className="text-xs font-mono uppercase tracking-widest text-text-primary font-bold">Feedback Portal</h5>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed mb-3">
+                  We use an external Google Form to collect feedback so we can continuously improve your FocusOn experience.
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-border-app/40">
+                <a
+                  href="https://forms.gle/FYEdVhAjCryxPS9E8"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex w-full items-center justify-center py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[9px] font-mono uppercase tracking-wider rounded transition-all cursor-pointer text-center no-underline border-none"
+                >
+                  Open Google Form ↗
+                </a>
+              </div>
+            </div>
+
           </div>
 
         </div>
       </div>
 
       {/* Trust banner */}
-      <div className="p-4 bg-[#121212]/80 backdrop-blur-md border border-[#2A2A2A]/80 rounded flex gap-3.5 items-start text-left">
-        <ShieldCheck className="w-4 h-4 text-[#888888] shrink-0 mt-0.5" />
+      <div className="p-4 bg-bg-panel border border-border-app rounded flex gap-3.5 items-start text-left transition-colors duration-300 shadow-[0_4px_20px_var(--shadow-intensity)]">
+        <CircleCheck className="w-4 h-4 text-text-muted shrink-0 mt-0.5" />
         <div className="space-y-1">
-          <span className="text-[9px] font-mono text-[#888888] uppercase tracking-widest block">SECURITY PROTOCOL</span>
-          <p className="text-[#666666] text-[10px] leading-relaxed mt-1">
+          <span className="text-[9px] font-mono text-text-muted uppercase tracking-widest block">SECURITY PROTOCOL</span>
+          <p className="text-text-muted text-[10px] leading-relaxed mt-1">
             All user statistics, completed drafts, and intervals are encrypted via Firebase. Keystrokes are kept entirely in local client bounds.
           </p>
         </div>

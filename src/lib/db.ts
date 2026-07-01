@@ -13,7 +13,41 @@ import {
   deleteDoc
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { UserProfile, FocusSession, DistractionLog, InsightStats } from "../types";
+import { UserProfile, FocusSession, DistractionLog, InsightStats, Project } from "../types";
+
+export const DEFAULT_PROJECTS: Project[] = [
+  { id: "work", name: "Work", color: "#3B82F6" },
+  { id: "study", name: "Study", color: "#8B5CF6" },
+  { id: "personal", name: "Personal", color: "#10B981" },
+  { id: "health", name: "Health & Wellness", color: "#F43F5E" }
+];
+
+// Helper to recursively strip any undefined properties to prevent Firestore errors
+function cleanData<T>(value: T): any {
+  if (value === undefined) {
+    return null; // Convert undefined to null as Firestore supports null
+  }
+  if (value === null) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => cleanData(item));
+  }
+  if (typeof value === "object") {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    const cleaned: any = {};
+    for (const key of Object.keys(value as any)) {
+      const val = (value as any)[key];
+      if (val !== undefined) {
+        cleaned[key] = cleanData(val);
+      }
+    }
+    return cleaned;
+  }
+  return value;
+}
 
 // User Profile management
 export async function getOrCreateUserProfile(uid: string, email: string, displayName: string | null, photoURL: string | null): Promise<UserProfile> {
@@ -21,7 +55,13 @@ export async function getOrCreateUserProfile(uid: string, email: string, display
   const userSnapshot = await getDoc(userDocRef);
   
   if (userSnapshot.exists()) {
-    return userSnapshot.data() as UserProfile;
+    const data = userSnapshot.data() as UserProfile;
+    if (!data.projects || data.projects.length === 0) {
+      const updatedProfile = { ...data, projects: DEFAULT_PROJECTS };
+      await setDoc(userDocRef, cleanData({ projects: DEFAULT_PROJECTS }), { merge: true });
+      return updatedProfile;
+    }
+    return data;
   } else {
     const freshProfile: UserProfile = {
       uid,
@@ -30,48 +70,78 @@ export async function getOrCreateUserProfile(uid: string, email: string, display
       photoURL,
       createdAt: new Date().toISOString(),
       adhdMode: false,
-      weeklyGoalMinutes: 150
+      weeklyGoalMinutes: 150,
+      projects: DEFAULT_PROJECTS
     };
-    await setDoc(userDocRef, freshProfile);
+    await setDoc(userDocRef, cleanData(freshProfile));
     return freshProfile;
   }
 }
 
 export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
   const userDocRef = doc(db, "users", uid);
-  await updateDoc(userDocRef, updates);
+  const cleanedUpdates = cleanData(updates);
+  if (cleanedUpdates && Object.keys(cleanedUpdates).length > 0) {
+    await updateDoc(userDocRef, cleanedUpdates);
+  }
 }
 
 // Focus Sessions CRUD
 export async function fetchUserSessions(uid: string, limitCount = 50): Promise<FocusSession[]> {
   try {
     const sessionsRef = collection(db, "sessions");
-    // Only query by userId to avoid needing a composite index.
-    const q = query(
-      sessionsRef,
-      where("userId", "==", uid)
-    );
-    const snap = await getDocs(q);
-    const results: FocusSession[] = [];
-    snap.forEach((doc) => {
-      results.push({ id: doc.id, ...doc.data() } as FocusSession);
-    });
-    // Sort descending by createdAt
-    return results.sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limitCount);
+    try {
+      // 1. Try modern production query with ordering and limiting directly on the server
+      const qOrdered = query(
+        sessionsRef,
+        where("userId", "==", uid),
+        orderBy("createdAt", "desc"),
+        limit(limitCount)
+      );
+      const snap = await getDocs(qOrdered);
+      const results: FocusSession[] = [];
+      snap.forEach((doc) => {
+        results.push({ id: doc.id, ...doc.data() } as FocusSession);
+      });
+      return results;
+    } catch (orderErr: any) {
+      // 2. Fall back to index-free query if composite index isn't set up yet, to guarantee zero-downtime onboarding
+      if (orderErr && (orderErr.message?.includes("index") || orderErr.code === "failed-precondition")) {
+        console.warn(
+          "Firestore Composite Index is not yet provisioned. For production scale, please create this index in Firebase Console:\n",
+          orderErr.message
+        );
+        
+        // Fetch a safe max buffer in fallback, then sort and slice in client memory
+        const qFallback = query(
+          sessionsRef,
+          where("userId", "==", uid),
+          limit(Math.max(100, limitCount * 2))
+        );
+        const snap = await getDocs(qFallback);
+        const results: FocusSession[] = [];
+        snap.forEach((doc) => {
+          results.push({ id: doc.id, ...doc.data() } as FocusSession);
+        });
+        return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limitCount);
+      }
+      throw orderErr;
+    }
   } catch (err) {
-    console.warn("Firestore sessions fetch error:", err);
+    console.error("Firestore sessions fetch error:", err);
     return [];
   }
 }
 
 export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: string): Promise<string> {
+  const cleanedSession = cleanData(session);
   if (id) {
     const docRef = doc(db, "sessions", id);
-    await setDoc(docRef, session, { merge: true });
+    await setDoc(docRef, cleanedSession, { merge: true });
     return id;
   } else {
     const sessionsRef = collection(db, "sessions");
-    const docRef = await addDoc(sessionsRef, session);
+    const docRef = await addDoc(sessionsRef, cleanedSession);
     return docRef.id;
   }
 }
@@ -90,9 +160,27 @@ export async function deleteAllUserSessions(uid: string): Promise<void> {
 }
 
 export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<string> {
+  const cleanedLog = cleanData(log);
   const ref = collection(db, "distractions");
-  const docRef = await addDoc(ref, log);
+  const docRef = await addDoc(ref, cleanedLog);
   return docRef.id;
+}
+
+// Local YYYY-MM-DD Date string generator
+export function getLocalDateStr(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Helper to parse local YYYY-MM-DD string into a local Date object
+export function parseLocalDate(dateStr: string): Date {
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  }
+  return new Date(dateStr);
 }
 
 // Generate real insight statistics based on records
@@ -105,17 +193,17 @@ export function calculateInsights(sessions: FocusSession[]): InsightStats {
   const uniqueDates = Array.from(new Set(completed.map(s => s.dateStr))).sort().reverse();
   let streak = 0;
   if (uniqueDates.length > 0) {
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getLocalDateStr(new Date());
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split("T")[0];
+    const yesterdayStr = getLocalDateStr(yesterday);
     
     // If the latest focus date is either today or yesterday, compute the streak
     if (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr) {
       streak = 1;
-      let lastDate = new Date(uniqueDates[0]);
+      let lastDate = parseLocalDate(uniqueDates[0]);
       for (let i = 1; i < uniqueDates.length; i++) {
-        const currentDate = new Date(uniqueDates[i]);
+        const currentDate = parseLocalDate(uniqueDates[i]);
         const diffTime = Math.abs(lastDate.getTime() - currentDate.getTime());
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         if (diffDays === 1) {

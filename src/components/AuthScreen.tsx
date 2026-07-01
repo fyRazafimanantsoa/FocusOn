@@ -63,8 +63,8 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
           <CircleDot className="w-4.5 h-4.5 text-zinc-300 text-glow" />
         </div>
         <div className="flex flex-col">
-          <span className="font-sans font-bold tracking-wide text-zinc-100 leading-none">FocusOn</span>
-          <span className="text-[8px] font-mono tracking-widest text-zinc-500 uppercase mt-0.5">Aether Neural Sandbox</span>
+          <span className="font-scale-app-name tracking-wide text-zinc-100 leading-none">FocusOn</span>
+          <span className="font-scale-tiny font-mono tracking-widest text-zinc-500 uppercase mt-0.5">Aether Neural Sandbox</span>
         </div>
       </motion.div>
 
@@ -130,18 +130,6 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
                 Sync with Google Platform
               </>
             )}
-          </button>
-
-          <button
-            onClick={onGuestAccess}
-            disabled={isLoading}
-            id="guest-signin-btn"
-            className="w-full h-14 glass-panel glass-panel-hover text-zinc-300 text-xs font-bold rounded-xl flex flex-col justify-center items-center gap-0.5 cursor-pointer disabled:opacity-50 active:scale-[0.982]"
-          >
-            <span className="flex items-center gap-2">
-              <Compass className="w-4 h-4 text-zinc-400" />
-              Enter Sandbox Mode
-            </span>
           </button>
         </motion.div>
       </motion.div>

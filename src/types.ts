@@ -1,3 +1,12 @@
+export interface Project {
+  id: string;
+  name: string;
+  color: string; // color hex code
+  isArchived?: boolean;
+  customDuration?: number; // override session duration in minutes
+  weeklyGoalHours?: number; // target focused hours per week
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -6,6 +15,10 @@ export interface UserProfile {
   createdAt: string;
   adhdMode: boolean;
   weeklyGoalMinutes: number;
+  projects?: Project[];
+  theme?: "dark" | "light";
+  blockedDomains?: string[];
+  completedOnboarding?: boolean;
 }
 
 export interface FocusSession {
@@ -23,6 +36,7 @@ export interface FocusSession {
   nextStepSuggested?: string;
   stuckCount: number;
   distractionCheckInCount: number;
+  projectId?: string;
 }
 
 export interface DistractionLog {
