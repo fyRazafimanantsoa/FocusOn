@@ -200,20 +200,6 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
             <span>Exit Workspace</span>
           </button>
         </div>
-
-        {(!user || user?.isAnonymous || localStorage.getItem("focuson_google_auth_failed") === "true") && (
-          <div className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded text-left">
-            <span className="text-[8px] font-mono text-yellow-500 font-bold tracking-wider uppercase block">💡 DOMAIN SIGN-IN RESOLUTION GUIDE</span>
-            <p className="text-text-secondary text-[10px] mt-1 leading-relaxed">
-              Google Auth popup was restricted by the browser or the hosting domain (Vercel). To resolve this and fully enable Google SSO on your Vercel deployment:
-            </p>
-            <ol className="list-decimal list-inside text-text-muted text-[9px] mt-1.5 space-y-1">
-              <li>Open your <span className="font-mono text-text-secondary">Firebase Console</span></li>
-              <li>Go to <span className="font-mono text-text-secondary">Authentication &gt; Settings</span></li>
-              <li>Add your Vercel domain (<span className="font-mono text-text-secondary">{window.location.hostname}</span>) to the <span className="font-mono text-text-secondary">Authorized Domains</span> list</li>
-            </ol>
-          </div>
-        )}
       </div>
 
       {/* Control cards container */}

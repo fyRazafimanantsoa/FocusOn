@@ -44,6 +44,17 @@ export async function signInWithGoogleRedirect() {
   }
 }
 
+// Check redirect result on app load
+export async function checkRedirectResult() {
+  try {
+    const result = await getRedirectResult(auth);
+    return result?.user || null;
+  } catch (error: any) {
+    console.error("Firebase Google Auth redirect result retrieval error:", error);
+    throw error;
+  }
+}
+
 // Sign Out helper
 export async function logOut() {
   await signOut(auth);

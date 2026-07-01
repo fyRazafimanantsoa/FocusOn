@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { auth } from "./lib/firebase";
+import { auth, checkRedirectResult } from "./lib/firebase";
 import { getOrCreateUserProfile, updateUserProfile, fetchUserSessions, saveFocusSession, deleteAllUserSessions, deleteUserSession, DEFAULT_PROJECTS } from "./lib/db";
 import { UserProfile, FocusSession, Project } from "./types";
 import AuthScreen from "./components/AuthScreen";
@@ -172,6 +172,23 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  // Check Google redirect sign-in result on mount
+  useEffect(() => {
+    setIsAuthLoading(true);
+    checkRedirectResult()
+      .then((user) => {
+        if (user) {
+          setCurrentUser(user);
+        }
+      })
+      .catch((err) => {
+        console.error("Redirect login check failed on mount:", err);
+      })
+      .finally(() => {
+        setIsAuthLoading(false);
+      });
+  }, []);
 
   // Track Auth States
   useEffect(() => {
@@ -469,10 +486,7 @@ export default function App() {
   // Auth gate
   if (!currentUser) {
     return (
-      <AuthScreen 
-        isLoading={isAuthLoading} 
-        setIsLoading={setIsAuthLoading} 
-      />
+      <AuthScreen />
     );
   }
 
