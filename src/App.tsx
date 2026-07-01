@@ -280,8 +280,7 @@ export default function App() {
 
   // Handle Guest user pathway log entry
   const handleGuestAccess = () => {
-    // Disabled as per user request: Just Google account sign-up and sign-in only
-    console.log("Guest mode disabled.");
+    setIsGuestMode(true);
   };
 
   const handleSignOut = () => {

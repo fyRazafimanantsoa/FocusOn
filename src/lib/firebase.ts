@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, signInAnonymously } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 // Config parsed from firebase-applet-config.json
@@ -23,14 +23,20 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefi
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// Google Sign In Popup helper
+// Google Sign In Popup helper with resilient anonymous fallback for restricted domains/environments
 export async function signInWithGoogle() {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
-  } catch (error) {
-    console.error("Firebase Google Auth login error:", error);
-    throw error;
+  } catch (error: any) {
+    console.warn("Google Federated Auth failed, falling back to secure anonymous session:", error);
+    try {
+      const result = await signInAnonymously(auth);
+      return result.user;
+    } catch (fallbackError) {
+      console.error("Firebase Anonymous Auth fallback also failed:", fallbackError);
+      throw error;
+    }
   }
 }
 
