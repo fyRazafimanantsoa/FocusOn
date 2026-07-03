@@ -167,39 +167,33 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
       </div>
 
       {/* User info Profile element */}
-      <div className="p-4 rounded bg-bg-panel border border-border-app flex flex-col gap-4 transition-colors duration-300 shadow-[0_4px_20px_var(--shadow-intensity)]">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-3.5 text-left">
-            {user && user.photoURL ? (
-              <img src={user.photoURL} alt={profile.displayName || "User"} referrerPolicy="no-referrer" className="w-11 h-11 rounded border border-border-app" />
-            ) : (
-              <div className="w-11 h-11 rounded bg-bg-btn border border-border-app flex items-center justify-center transition-colors duration-300">
-                <User className="w-5 h-5 text-text-muted" />
-              </div>
-            )}
-            <div className="text-left">
-              <h3 className="text-xs sm:text-sm font-medium text-text-primary leading-none transition-colors duration-300">
-                {user ? (user.isAnonymous ? "Secure Client Sandbox" : (user.displayName || "Sync User")) : "Sandbox Visitor"}
-              </h3>
-              <p className="text-[10px] font-mono text-text-muted mt-1 transition-colors duration-300">
-                {user ? (user.isAnonymous ? "session-local-sync" : (user.email || "synced-user")) : "guest@focuson.io"}
-              </p>
-              <span className="inline-block mt-2 px-2 py-0.5 rounded bg-bg-btn border border-border-app text-[8px] font-mono text-text-secondary uppercase tracking-wider transition-colors duration-300">
-                {user ? (user.isAnonymous ? "Secure Fallback Active" : "Cloud Sync active") : "Guest Mode only"}
-              </span>
+      <div className="p-4 rounded bg-bg-panel border border-border-app flex justify-between items-center transition-colors duration-300 shadow-[0_4px_20px_var(--shadow-intensity)]">
+        <div className="flex items-center gap-3.5 text-left">
+          {user && user.photoURL ? (
+            <img src={user.photoURL} alt={profile.displayName || "User"} referrerPolicy="no-referrer" className="w-11 h-11 rounded border border-border-app" />
+          ) : (
+            <div className="w-11 h-11 rounded bg-bg-btn border border-border-app flex items-center justify-center transition-colors duration-300">
+              <User className="w-5 h-5 text-text-muted" />
             </div>
+          )}
+          <div className="text-left">
+            <h3 className="text-xs sm:text-sm font-medium text-text-primary leading-none transition-colors duration-300">{user ? user.displayName : "Sandbox Visitor"}</h3>
+            <p className="text-[10px] font-mono text-text-muted mt-1 transition-colors duration-300">{user ? user.email : "guest@focuson.io"}</p>
+            <span className="inline-block mt-2 px-2 py-0.5 rounded bg-bg-btn border border-border-app text-[8px] font-mono text-text-secondary uppercase tracking-wider transition-colors duration-300">
+              {user ? "Cloud Sync active" : "Guest Mode only"}
+            </span>
           </div>
-
-          <button
-            onClick={handleLogOutClick}
-            id="logout-btn"
-            className="px-3 py-2 bg-bg-btn hover:bg-bg-btn-hover border border-border-app text-text-secondary hover:text-text-primary rounded transition-all cursor-pointer text-[11px] font-medium flex items-center gap-1.5"
-            title="Sign out of current account"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Exit Workspace</span>
-          </button>
         </div>
+
+        <button
+          onClick={handleLogOutClick}
+          id="logout-btn"
+          className="px-3 py-2 bg-bg-btn hover:bg-bg-btn-hover border border-border-app text-text-secondary hover:text-text-primary rounded transition-all cursor-pointer text-[11px] font-medium flex items-center gap-1.5"
+          title="Sign out of current account"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Exit Workspace</span>
+        </button>
       </div>
 
       {/* Control cards container */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { auth, checkRedirectResult } from "./lib/firebase";
+import { auth, logOut } from "./lib/firebase";
 import { getOrCreateUserProfile, updateUserProfile, fetchUserSessions, saveFocusSession, deleteAllUserSessions, deleteUserSession, DEFAULT_PROJECTS } from "./lib/db";
 import { UserProfile, FocusSession, Project } from "./types";
 import AuthScreen from "./components/AuthScreen";
@@ -20,7 +20,8 @@ import {
   Play,
   Plus,
   Maximize2,
-  MessageCircle
+  MessageCircle,
+  LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -65,6 +66,18 @@ export default function App() {
   const [userSessions, setUserSessions] = useState<FocusSession[]>([]);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [sessionsLimit, setSessionsLimit] = useState(25);
+  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOfflineMode(false);
+    const handleOffline = () => setIsOfflineMode(true);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   const handleLoadMore = async () => {
     if (!currentUser) return;
@@ -173,23 +186,6 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  // Check Google redirect sign-in result on mount
-  useEffect(() => {
-    setIsAuthLoading(true);
-    checkRedirectResult()
-      .then((user) => {
-        if (user) {
-          setCurrentUser(user);
-        }
-      })
-      .catch((err) => {
-        console.error("Redirect login check failed on mount:", err);
-      })
-      .finally(() => {
-        setIsAuthLoading(false);
-      });
-  }, []);
-
   // Track Auth States
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
@@ -205,10 +201,61 @@ export default function App() {
             firebaseUser.photoURL
           );
           setUserProfile(profile);
+          try {
+            localStorage.setItem(`focuson_profile_${firebaseUser.uid}`, JSON.stringify(profile));
+          } catch (storageErr) {
+            console.warn("Storage quota exceeded or private tab: cannot cache profile locally.", storageErr);
+          }
+
           const sessions = await fetchUserSessions(firebaseUser.uid, sessionsLimit);
           setUserSessions(sessions);
+          try {
+            localStorage.setItem(`focuson_sessions_${firebaseUser.uid}`, JSON.stringify(sessions));
+          } catch (storageErr) {
+            console.warn("Storage quota exceeded or private tab: cannot cache sessions locally.", storageErr);
+          }
         } catch (err) {
-          console.error("Firestore user profile loading error:", err);
+          console.error("Firestore user profile/session loading error (falling back to cache):", err);
+          setIsOfflineMode(true);
+
+          // Try to recover from local storage cache
+          let fallbackProfile: UserProfile | null = null;
+          try {
+            const cachedProfileStr = localStorage.getItem(`focuson_profile_${firebaseUser.uid}`);
+            if (cachedProfileStr) {
+              fallbackProfile = JSON.parse(cachedProfileStr);
+            }
+          } catch (cacheErr) {
+            console.error("Failed to read cached profile:", cacheErr);
+          }
+
+          if (fallbackProfile) {
+            setUserProfile(fallbackProfile);
+          } else {
+            // Generate a default temporary offline profile to ensure app does not crash
+            const defaultOfflineProfile: UserProfile = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || "",
+              displayName: firebaseUser.displayName || "Offline FocusOn User",
+              photoURL: firebaseUser.photoURL || null,
+              createdAt: new Date().toISOString(),
+              adhdMode: false,
+              weeklyGoalMinutes: 150,
+              projects: DEFAULT_PROJECTS
+            };
+            setUserProfile(defaultOfflineProfile);
+          }
+
+          let fallbackSessions: FocusSession[] = [];
+          try {
+            const cachedSessionsStr = localStorage.getItem(`focuson_sessions_${firebaseUser.uid}`);
+            if (cachedSessionsStr) {
+              fallbackSessions = JSON.parse(cachedSessionsStr);
+            }
+          } catch (cacheErr) {
+            console.error("Failed to read cached sessions:", cacheErr);
+          }
+          setUserSessions(fallbackSessions);
         }
       } else {
         setCurrentUser(null);
@@ -221,7 +268,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [isGuestMode]);
+  }, [isGuestMode, sessionsLimit]);
 
   // Load guest sandbox data from localStorage if and only if Guest Mode is selected
   useEffect(() => {
@@ -300,7 +347,12 @@ export default function App() {
     setIsGuestMode(true);
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await logOut();
+    } catch (e) {
+      console.warn("Firebase signout failed:", e);
+    }
     setIsGuestMode(false);
     setCurrentUser(null);
     setUserProfile(null);
@@ -315,7 +367,22 @@ export default function App() {
     setUserProfile(nextProfile);
 
     if (currentUser) {
-      await updateUserProfile(currentUser.uid, updates);
+      try {
+        await updateUserProfile(currentUser.uid, updates);
+        try {
+          localStorage.setItem(`focuson_profile_${currentUser.uid}`, JSON.stringify(nextProfile));
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded or private tab: cannot cache profile update locally.", storageErr);
+        }
+      } catch (err) {
+        console.error("Failed to update profile to Firestore, caching locally:", err);
+        setIsOfflineMode(true);
+        try {
+          localStorage.setItem(`focuson_profile_${currentUser.uid}`, JSON.stringify(nextProfile));
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded or private tab: cannot cache profile update locally.", storageErr);
+        }
+      }
     } else if (isGuestMode) {
       localStorage.setItem("focuson_guest_profile", JSON.stringify(nextProfile));
     }
@@ -324,9 +391,31 @@ export default function App() {
   // Save session record helper
   const handleSaveSession = async (sessionData: Omit<FocusSession, "id">) => {
     if (currentUser) {
-      const generatedId = await saveFocusSession(sessionData);
-      const updatedList = await fetchUserSessions(currentUser.uid, sessionsLimit);
-      setUserSessions(updatedList);
+      try {
+        await saveFocusSession(sessionData);
+        const updatedList = await fetchUserSessions(currentUser.uid, sessionsLimit);
+        setUserSessions(updatedList);
+        try {
+          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(updatedList));
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
+        }
+      } catch (err) {
+        console.error("Failed to save session to Firestore, caching locally:", err);
+        setIsOfflineMode(true);
+        // Fallback session so user sees it instantly
+        const fallbackSession: FocusSession = {
+          id: `offline_sess_${Date.now()}`,
+          ...sessionData
+        };
+        const updatedList = [fallbackSession, ...userSessions];
+        setUserSessions(updatedList);
+        try {
+          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(updatedList));
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
+        }
+      }
     } else if (isGuestMode) {
       const freshIndexId = `guest_session_${Date.now()}`;
       const newSession: FocusSession = { id: freshIndexId, ...sessionData };
@@ -382,8 +471,26 @@ export default function App() {
 
   const handleDeleteSession = async (sessionId: string) => {
     if (currentUser) {
-      await deleteUserSession(sessionId);
-      setUserSessions(prev => prev.filter(s => s.id !== sessionId));
+      try {
+        await deleteUserSession(sessionId);
+        const nextList = userSessions.filter(s => s.id !== sessionId);
+        setUserSessions(nextList);
+        try {
+          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextList));
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
+        }
+      } catch (err) {
+        console.error("Failed to delete session on Firestore:", err);
+        setIsOfflineMode(true);
+        const nextList = userSessions.filter(s => s.id !== sessionId);
+        setUserSessions(nextList);
+        try {
+          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextList));
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
+        }
+      }
     } else if (isGuestMode) {
       const updatedList = userSessions.filter(s => s.id !== sessionId);
       setUserSessions(updatedList);
@@ -448,7 +555,22 @@ export default function App() {
     if (targetSession) {
       const { id, ...sessionPayload } = targetSession;
       if (currentUser) {
-        await saveFocusSession(sessionPayload, sessionId);
+        try {
+          await saveFocusSession(sessionPayload, sessionId);
+          try {
+            localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextSessions));
+          } catch (storageErr) {
+            console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
+          }
+        } catch (err) {
+          console.error("Failed to update session project on Firestore:", err);
+          setIsOfflineMode(true);
+          try {
+            localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextSessions));
+          } catch (storageErr) {
+            console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
+          }
+        }
       } else if (isGuestMode) {
         localStorage.setItem("focuson_guest_sessions", JSON.stringify(nextSessions));
       }
@@ -484,9 +606,13 @@ export default function App() {
   }
 
   // Auth gate
-  if (!currentUser) {
+  if (!currentUser && !isGuestMode) {
     return (
-      <AuthScreen />
+      <AuthScreen 
+        onGuestAccess={handleGuestAccess} 
+        isLoading={isAuthLoading} 
+        setIsLoading={setIsAuthLoading} 
+      />
     );
   }
 
@@ -565,12 +691,26 @@ export default function App() {
                   Overdrive
                 </span>
               )}
+              {isOfflineMode && (
+                <span className="px-2.5 py-1.5 rounded border border-[#EF4444]/30 text-[9px] font-mono text-[#EF4444]/90 uppercase tracking-widest bg-[#EF4444]/5 flex items-center gap-1.5 transition-all duration-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] animate-pulse" />
+                  Offline
+                </span>
+              )}
               <div className="px-3 py-1.5 border border-border-app bg-bg-card/40 backdrop-blur-sm rounded flex items-center gap-2 transition-colors duration-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-text-primary shrink-0 transition-colors duration-300" />
                 <span className="text-[10px] font-mono text-text-secondary transition-colors duration-300">
                   {userSessions.filter(s => s.completed).length} Sessions
                 </span>
               </div>
+              <button
+                onClick={handleSignOut}
+                id="header-logout-btn"
+                className="p-2 border border-border-app bg-bg-card/40 hover:bg-bg-card/80 backdrop-blur-sm rounded text-text-secondary hover:text-red-400 hover:border-red-950/40 transition-all cursor-pointer flex items-center justify-center"
+                title="Sign Out of FocusOn"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
             </div>
           </motion.header>
         )}
@@ -607,7 +747,7 @@ export default function App() {
                   sessions={userSessions} 
                   profile={userProfile}
                   onDeleteSession={handleDeleteSession} 
-                  projects={userProfile.projects || DEFAULT_PROJECTS}
+                  projects={userProfile?.projects || DEFAULT_PROJECTS}
                   onCreateProject={handleCreateProject}
                   onUpdateSessionProject={handleUpdateSessionProject}
                   onLoadMore={handleLoadMore}
@@ -626,7 +766,7 @@ export default function App() {
               >
                 <ProjectsTab 
                   sessions={userSessions} 
-                  projects={userProfile.projects || DEFAULT_PROJECTS}
+                  projects={userProfile?.projects || DEFAULT_PROJECTS}
                   onCreateProject={handleCreateProject}
                   onUpdateProject={handleUpdateProject}
                   onDeleteProject={handleDeleteProject}

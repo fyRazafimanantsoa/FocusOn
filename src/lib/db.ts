@@ -1,18 +1,3 @@
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  getDocs, 
-  limit, 
-  addDoc,
-  deleteDoc
-} from "firebase/firestore";
-import { db } from "./firebase";
 import { UserProfile, FocusSession, DistractionLog, InsightStats, Project } from "../types";
 
 export const DEFAULT_PROJECTS: Project[] = [
@@ -22,148 +7,154 @@ export const DEFAULT_PROJECTS: Project[] = [
   { id: "health", name: "Health & Wellness", color: "#F43F5E" }
 ];
 
-// Helper to recursively strip any undefined properties to prevent Firestore errors
-function cleanData<T>(value: T): any {
-  if (value === undefined) {
-    return null; // Convert undefined to null as Firestore supports null
-  }
-  if (value === null) {
-    return null;
-  }
-  if (Array.isArray(value)) {
-    return value.map(item => cleanData(item));
-  }
-  if (typeof value === "object") {
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-    const cleaned: any = {};
-    for (const key of Object.keys(value as any)) {
-      const val = (value as any)[key];
-      if (val !== undefined) {
-        cleaned[key] = cleanData(val);
-      }
-    }
-    return cleaned;
-  }
-  return value;
-}
-
 // User Profile management
 export async function getOrCreateUserProfile(uid: string, email: string, displayName: string | null, photoURL: string | null): Promise<UserProfile> {
-  const userDocRef = doc(db, "users", uid);
-  const userSnapshot = await getDoc(userDocRef);
-  
-  if (userSnapshot.exists()) {
-    const data = userSnapshot.data() as UserProfile;
-    if (!data.projects || data.projects.length === 0) {
-      const updatedProfile = { ...data, projects: DEFAULT_PROJECTS };
-      await setDoc(userDocRef, cleanData({ projects: DEFAULT_PROJECTS }), { merge: true });
-      return updatedProfile;
+  const cacheKey = `focuson_profile_${uid}`;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) {
+    try {
+      const data = JSON.parse(cached) as UserProfile;
+      if (!data.projects || data.projects.length === 0) {
+        data.projects = DEFAULT_PROJECTS;
+        localStorage.setItem(cacheKey, JSON.stringify(data));
+      }
+      return data;
+    } catch (e) {
+      console.error("Failed to parse cached profile", e);
     }
-    return data;
-  } else {
-    const freshProfile: UserProfile = {
-      uid,
-      email,
-      displayName,
-      photoURL,
-      createdAt: new Date().toISOString(),
-      adhdMode: false,
-      weeklyGoalMinutes: 150,
-      projects: DEFAULT_PROJECTS
-    };
-    await setDoc(userDocRef, cleanData(freshProfile));
-    return freshProfile;
   }
+
+  const freshProfile: UserProfile = {
+    uid,
+    email,
+    displayName: displayName || email.split("@")[0] || "FocusOn User",
+    photoURL,
+    createdAt: new Date().toISOString(),
+    adhdMode: false,
+    weeklyGoalMinutes: 150,
+    projects: DEFAULT_PROJECTS
+  };
+  localStorage.setItem(cacheKey, JSON.stringify(freshProfile));
+  return freshProfile;
 }
 
 export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
-  const userDocRef = doc(db, "users", uid);
-  const cleanedUpdates = cleanData(updates);
-  if (cleanedUpdates && Object.keys(cleanedUpdates).length > 0) {
-    await updateDoc(userDocRef, cleanedUpdates);
+  const cacheKey = `focuson_profile_${uid}`;
+  const cached = localStorage.getItem(cacheKey);
+  let profile: UserProfile;
+  if (cached) {
+    try {
+      profile = { ...JSON.parse(cached), ...updates };
+    } catch {
+      profile = {
+        uid,
+        email: "",
+        displayName: "FocusOn User",
+        photoURL: null,
+        createdAt: new Date().toISOString(),
+        adhdMode: false,
+        weeklyGoalMinutes: 150,
+        projects: DEFAULT_PROJECTS,
+        ...updates
+      };
+    }
+  } else {
+    profile = {
+      uid,
+      email: "",
+      displayName: "FocusOn User",
+      photoURL: null,
+      createdAt: new Date().toISOString(),
+      adhdMode: false,
+      weeklyGoalMinutes: 150,
+      projects: DEFAULT_PROJECTS,
+      ...updates
+    };
   }
+  localStorage.setItem(cacheKey, JSON.stringify(profile));
 }
 
 // Focus Sessions CRUD
 export async function fetchUserSessions(uid: string, limitCount = 50): Promise<FocusSession[]> {
-  try {
-    const sessionsRef = collection(db, "sessions");
+  const cacheKey = `focuson_sessions_${uid}`;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) {
     try {
-      // 1. Try modern production query with ordering and limiting directly on the server
-      const qOrdered = query(
-        sessionsRef,
-        where("userId", "==", uid),
-        orderBy("createdAt", "desc"),
-        limit(limitCount)
-      );
-      const snap = await getDocs(qOrdered);
-      const results: FocusSession[] = [];
-      snap.forEach((doc) => {
-        results.push({ id: doc.id, ...doc.data() } as FocusSession);
-      });
-      return results;
-    } catch (orderErr: any) {
-      // 2. Fall back to index-free query if composite index isn't set up yet, to guarantee zero-downtime onboarding
-      if (orderErr && (orderErr.message?.includes("index") || orderErr.code === "failed-precondition")) {
-        console.warn(
-          "Firestore Composite Index is not yet provisioned. For production scale, please create this index in Firebase Console:\n",
-          orderErr.message
-        );
-        
-        // Fetch a safe max buffer in fallback, then sort and slice in client memory
-        const qFallback = query(
-          sessionsRef,
-          where("userId", "==", uid),
-          limit(Math.max(100, limitCount * 2))
-        );
-        const snap = await getDocs(qFallback);
-        const results: FocusSession[] = [];
-        snap.forEach((doc) => {
-          results.push({ id: doc.id, ...doc.data() } as FocusSession);
-        });
-        return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limitCount);
-      }
-      throw orderErr;
+      const list = JSON.parse(cached) as FocusSession[];
+      return list.slice(0, limitCount);
+    } catch {
+      return [];
     }
-  } catch (err) {
-    console.error("Firestore sessions fetch error:", err);
-    return [];
   }
+  return [];
 }
 
 export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: string): Promise<string> {
-  const cleanedSession = cleanData(session);
-  if (id) {
-    const docRef = doc(db, "sessions", id);
-    await setDoc(docRef, cleanedSession, { merge: true });
-    return id;
-  } else {
-    const sessionsRef = collection(db, "sessions");
-    const docRef = await addDoc(sessionsRef, cleanedSession);
-    return docRef.id;
+  const uid = session.userId;
+  const cacheKey = `focuson_sessions_${uid}`;
+  const cached = localStorage.getItem(cacheKey);
+  let list: FocusSession[] = [];
+  if (cached) {
+    try {
+      list = JSON.parse(cached);
+    } catch {}
   }
+
+  const targetId = id || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  const existingIdx = list.findIndex(s => s.id === targetId);
+
+  const fullSession: FocusSession = {
+    ...session,
+    id: targetId
+  };
+
+  if (existingIdx >= 0) {
+    list[existingIdx] = fullSession;
+  } else {
+    list.unshift(fullSession);
+  }
+
+  localStorage.setItem(cacheKey, JSON.stringify(list));
+  return targetId;
 }
 
 export async function deleteUserSession(sessionId: string): Promise<void> {
-  await deleteDoc(doc(db, "sessions", sessionId));
-}
-
-export async function deleteAllUserSessions(uid: string): Promise<void> {
-  const sessions = await fetchUserSessions(uid, 1000); // Fetch all to delete
-  for (const session of sessions) {
-    if (session.id) {
-      await deleteDoc(doc(db, "sessions", session.id));
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("focuson_sessions_")) {
+      try {
+        const val = localStorage.getItem(key);
+        if (val) {
+          const list = JSON.parse(val) as FocusSession[];
+          const filtered = list.filter(s => s.id !== sessionId);
+          if (filtered.length !== list.length) {
+            localStorage.setItem(key, JSON.stringify(filtered));
+            break;
+          }
+        }
+      } catch {}
     }
   }
 }
 
+export async function deleteAllUserSessions(uid: string): Promise<void> {
+  const cacheKey = `focuson_sessions_${uid}`;
+  localStorage.removeItem(cacheKey);
+}
+
 export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<string> {
-  const cleanedLog = cleanData(log);
-  const ref = collection(db, "distractions");
-  const docRef = await addDoc(ref, cleanedLog);
-  return docRef.id;
+  const targetId = `dist_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  const cacheKey = `focuson_distractions_${log.userId || "anonymous"}`;
+  let list: any[] = [];
+  try {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      list = JSON.parse(cached);
+    }
+  } catch {}
+  list.unshift({ ...log, id: targetId });
+  localStorage.setItem(cacheKey, JSON.stringify(list));
+  return targetId;
 }
 
 // Local YYYY-MM-DD Date string generator

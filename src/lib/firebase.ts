@@ -1,23 +1,29 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from "firebase/auth";
 
-// Config parsed from firebase-applet-config.json
+// User's custom Firebase Config
 const firebaseConfig = {
-  apiKey: "AIzaSyBB_7LtIhfdmcqqQI-ALXFx___3CYvGCt8",
-  authDomain: "gen-lang-client-0797471805.firebaseapp.com",
-  projectId: "gen-lang-client-0797471805",
-  storageBucket: "gen-lang-client-0797471805.firebasestorage.app",
-  messagingSenderId: "804966477360",
-  appId: "1:804966477360:web:339c28bcadaa9fc30607f5",
-  firestoreDatabaseId: "ai-studio-a8b9b77c-8cce-480e-a795-520e5b0aead9"
+  apiKey: "AIzaSyBo9myE-P5jI3WctBFLzk9sBItqEawuIa0",
+  authDomain: "focuson-2.web.app",
+  projectId: "focuson-2",
+  storageBucket: "focuson-2.firebasestorage.app",
+  messagingSenderId: "332419558209",
+  appId: "1:332419558209:web:7f3ab85898597869348fc0",
+  measurementId: "G-9R8640GF1J"
 };
 
 // Initialize app parent
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with specific database ID to bypass sandbox limitations
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);
+// Expose mock/null database to satisfy imports while honoring "Do NOT use Firestore or Storage yet"
+export const db = null as any;
 
 // Initialize Auth
 export const auth = getAuth(app);
@@ -28,29 +34,35 @@ export async function signInWithGoogle() {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
-  } catch (error: any) {
-    console.error("Firebase Google Auth popup error:", error);
+  } catch (error) {
+    console.warn("Firebase Google Auth login warning (handled):", error);
     throw error;
   }
 }
 
-// Google Sign In Redirect helper (extremely robust for iframe constraints and unauthorized Vercel domains)
-export async function signInWithGoogleRedirect() {
+// Email/Password sign-in helper
+export async function loginWithEmail(email: string, password: string) {
   try {
-    await signInWithRedirect(auth, googleProvider);
+    const result = await signInWithEmailAndPassword(auth, email, password);
+    return result.user;
   } catch (error: any) {
-    console.error("Firebase Google Auth redirect error:", error);
-    throw error;
+    console.warn("Email sign in warning (handled):", error);
+    // User requested: "Email or password is incorrect"
+    throw new Error("Email or password is incorrect");
   }
 }
 
-// Check redirect result on app load
-export async function checkRedirectResult() {
+// Email/Password sign-up helper
+export async function signUpWithEmail(email: string, password: string) {
   try {
-    const result = await getRedirectResult(auth);
-    return result?.user || null;
+    const result = await createUserWithEmailAndPassword(auth, email, password);
+    return result.user;
   } catch (error: any) {
-    console.error("Firebase Google Auth redirect result retrieval error:", error);
+    console.warn("Email sign up warning (handled):", error);
+    // User requested: "User already exists. Please sign in" if email already exists
+    if (error.code === "auth/email-already-in-use") {
+      throw new Error("User already exists. Please sign in");
+    }
     throw error;
   }
 }
