@@ -527,7 +527,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+             <div className="flex items-center gap-2">
               {userProfile?.adhdMode && (
                 <span className="px-2.5 py-1 rounded border border-border-app text-[9px] font-mono text-text-secondary uppercase tracking-widest bg-bg-card transition-colors duration-300">
                   Overdrive

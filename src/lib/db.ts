@@ -1,19 +1,5 @@
 import { UserProfile, FocusSession, DistractionLog, InsightStats, Project } from "../types";
-import { db, auth } from "./firebase";
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  getDocs, 
-  deleteDoc,
-  writeBatch
-} from "firebase/firestore";
+import { auth } from "./firebase";
 
 export const DEFAULT_PROJECTS: Project[] = [
   { id: "work", name: "Work", color: "#3B82F6" },
@@ -39,6 +25,36 @@ export function parseLocalDate(dateStr: string): Date {
   return new Date(dateStr);
 }
 
+// State tracker for Firestore blocking (Ad blocker, network issue, etc.)
+let blockedListener: ((blocked: boolean) => void) | null = null;
+let isBlockedVal = false;
+
+export function onFirestoreBlockedChange(listener: (blocked: boolean) => void) {
+  blockedListener = listener;
+  // Notify immediately with current state
+  listener(isBlockedVal);
+}
+
+export function setFirestoreBlocked(blocked: boolean) {
+  if (isBlockedVal !== blocked) {
+    isBlockedVal = blocked;
+    if (blockedListener) {
+      blockedListener(blocked);
+    }
+  }
+}
+
+// Helper for making API calls to our Express backend proxy
+async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
+  const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+  const headers = {
+    ...options.headers,
+    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    "Content-Type": "application/json"
+  };
+  return fetch(url, { ...options, headers });
+}
+
 // User Profile management
 export async function getOrCreateUserProfile(
   uid: string,
@@ -50,11 +66,9 @@ export async function getOrCreateUserProfile(
 
   if (!isLocal) {
     try {
-      const userRef = doc(db, "users", uid);
-      const userSnap = await getDoc(userRef);
-
-      if (userSnap.exists()) {
-        const data = userSnap.data() as UserProfile;
+      const response = await fetchWithAuth("/api/user-profile");
+      if (response.status === 200) {
+        const data = await response.json() as UserProfile;
         const updatedProfile = {
           ...data,
           completedOnboarding: data.completedOnboarding ?? true,
@@ -64,7 +78,7 @@ export async function getOrCreateUserProfile(
         localStorage.setItem("focuson_profile_" + uid, JSON.stringify(updatedProfile));
         localStorage.setItem("focuson_profile", JSON.stringify(updatedProfile));
         return updatedProfile;
-      } else {
+      } else if (response.status === 404) {
         const freshProfile: UserProfile = {
           uid,
           email: email || "user@focuson.app",
@@ -76,14 +90,17 @@ export async function getOrCreateUserProfile(
           projects: DEFAULT_PROJECTS,
           completedOnboarding: false
         };
-        await setDoc(userRef, freshProfile);
+        await fetchWithAuth("/api/user-profile", {
+          method: "POST",
+          body: JSON.stringify(freshProfile)
+        });
         // Cache locally
         localStorage.setItem("focuson_profile_" + uid, JSON.stringify(freshProfile));
         localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
         return freshProfile;
       }
     } catch (err) {
-      console.warn("Firestore error fetching user profile, falling back to local storage:", err);
+      console.warn("API error fetching user profile, falling back to local storage:", err);
     }
   }
 
@@ -124,10 +141,12 @@ export async function updateUserProfile(uid: string, updates: Partial<UserProfil
 
   if (!isLocal) {
     try {
-      const userRef = doc(db, "users", uid);
-      await setDoc(userRef, updates, { merge: true });
+      await fetchWithAuth("/api/user-profile", {
+        method: "POST",
+        body: JSON.stringify(updates)
+      });
     } catch (err) {
-      console.error("Error updating user profile in Firestore:", err);
+      console.error("Error updating user profile via API:", err);
     }
   }
 
@@ -162,24 +181,16 @@ export async function fetchUserSessions(uid: string, limitCount = 50): Promise<F
 
   if (!isLocal) {
     try {
-      const sessionsRef = collection(db, "sessions");
-      const q = query(
-        sessionsRef,
-        where("userId", "==", uid),
-        orderBy("createdAt", "desc"),
-        limit(limitCount)
-      );
-      const querySnapshot = await getDocs(q);
-      const sessions: FocusSession[] = [];
-      querySnapshot.forEach((doc) => {
-        sessions.push({ id: doc.id, ...doc.data() } as FocusSession);
-      });
-      // Synchronize with local storage for guest/local caching
-      localStorage.setItem("focuson_sessions_" + uid, JSON.stringify(sessions));
-      localStorage.setItem("focuson_sessions", JSON.stringify(sessions));
-      return sessions;
+      const response = await fetchWithAuth(`/api/user-sessions?limit=${limitCount}`);
+      if (response.status === 200) {
+        const sessions = await response.json() as FocusSession[];
+        // Synchronize with local storage for guest/local caching
+        localStorage.setItem("focuson_sessions_" + uid, JSON.stringify(sessions));
+        localStorage.setItem("focuson_sessions", JSON.stringify(sessions));
+        return sessions;
+      }
     } catch (err) {
-      console.warn("Firestore error fetching user sessions, falling back to local storage:", err);
+      console.warn("API error fetching user sessions, falling back to local storage:", err);
     }
   }
 
@@ -237,11 +248,13 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
 
   if (!isLocal) {
     try {
-      const sessionRef = doc(db, "sessions", generatedId);
-      await setDoc(sessionRef, { ...session, id: generatedId }, { merge: true });
+      await fetchWithAuth("/api/user-sessions", {
+        method: "POST",
+        body: JSON.stringify({ id: generatedId, session })
+      });
       return generatedId;
     } catch (err) {
-      console.error("Error saving focus session to Firestore:", err);
+      console.error("Error saving focus session via API:", err);
     }
   }
 
@@ -263,14 +276,14 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
 }
 
 export async function deleteUserSession(sessionId: string): Promise<void> {
-  // First, try deleting from Firestore if we can find a matching session or if we are logged in
   const user = auth.currentUser;
   if (user) {
     try {
-      const sessionRef = doc(db, "sessions", sessionId);
-      await deleteDoc(sessionRef);
+      await fetchWithAuth(`/api/user-sessions/${sessionId}`, {
+        method: "DELETE"
+      });
     } catch (err) {
-      console.error("Error deleting session from Firestore:", err);
+      console.error("Error deleting session via API:", err);
     }
   }
 
@@ -290,16 +303,11 @@ export async function deleteAllUserSessions(uid: string): Promise<void> {
 
   if (!isLocal) {
     try {
-      const sessionsRef = collection(db, "sessions");
-      const q = query(sessionsRef, where("userId", "==", uid));
-      const querySnapshot = await getDocs(q);
-      const batch = writeBatch(db);
-      querySnapshot.forEach((doc) => {
-        batch.delete(doc.ref);
+      await fetchWithAuth("/api/user-sessions", {
+        method: "DELETE"
       });
-      await batch.commit();
     } catch (err) {
-      console.error("Error batch deleting sessions from Firestore:", err);
+      console.error("Error batch deleting sessions via API:", err);
     }
   }
 
@@ -313,10 +321,12 @@ export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<s
 
   if (!isLocal) {
     try {
-      const distractionRef = doc(db, "distractions", generatedId);
-      await setDoc(distractionRef, { ...log, id: generatedId });
+      await fetchWithAuth("/api/distraction-log", {
+        method: "POST",
+        body: JSON.stringify({ id: generatedId, log })
+      });
     } catch (err) {
-      console.error("Error logging distraction to Firestore:", err);
+      console.error("Error logging distraction via API:", err);
     }
   }
 
