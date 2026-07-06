@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { auth, logOut } from "./lib/firebase";
+import { auth } from "./lib/firebase";
 import { getOrCreateUserProfile, updateUserProfile, fetchUserSessions, saveFocusSession, deleteAllUserSessions, deleteUserSession, DEFAULT_PROJECTS } from "./lib/db";
 import { UserProfile, FocusSession, Project } from "./types";
 import AuthScreen from "./components/AuthScreen";
@@ -20,8 +20,7 @@ import {
   Play,
   Plus,
   Maximize2,
-  MessageCircle,
-  LogOut
+  MessageCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -66,33 +65,17 @@ export default function App() {
   const [userSessions, setUserSessions] = useState<FocusSession[]>([]);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [sessionsLimit, setSessionsLimit] = useState(25);
-  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
-
-  useEffect(() => {
-    const handleOnline = () => setIsOfflineMode(false);
-    const handleOffline = () => setIsOfflineMode(true);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
 
   const handleLoadMore = async () => {
-    if (!currentUser) return;
     const nextLimit = sessionsLimit + 25;
     setSessionsLimit(nextLimit);
     try {
-      const sessions = await fetchUserSessions(currentUser.uid, nextLimit);
+      const sessions = await fetchUserSessions("local-user", nextLimit);
       setUserSessions(sessions);
     } catch (err) {
       console.error("Error loading more sessions:", err);
     }
   };
-  
-  // Guest Sandbox Mode state
-  const [isGuestMode, setIsGuestMode] = useState(false);
   
   const [activeTab, setActiveTab] = useState<ActiveTab>("focus");
 
@@ -191,75 +174,94 @@ export default function App() {
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
       setIsAuthLoading(true);
       if (firebaseUser) {
-        setCurrentUser(firebaseUser);
-        setIsGuestMode(false);
-        try {
-          const profile = await getOrCreateUserProfile(
-            firebaseUser.uid,
-            firebaseUser.email || "",
-            firebaseUser.displayName,
-            firebaseUser.photoURL
-          );
-          setUserProfile(profile);
+        const uid = firebaseUser.uid;
+        
+        // 1. Instantly load from local storage cache so user doesn't wait for network roundtrips
+        const cachedProfileStr = localStorage.getItem("focuson_profile_" + uid) || localStorage.getItem("focuson_profile");
+        const cachedSessionsStr = localStorage.getItem("focuson_sessions_" + uid) || localStorage.getItem("focuson_sessions");
+        
+        if (cachedProfileStr) {
           try {
-            localStorage.setItem(`focuson_profile_${firebaseUser.uid}`, JSON.stringify(profile));
-          } catch (storageErr) {
-            console.warn("Storage quota exceeded or private tab: cannot cache profile locally.", storageErr);
+            const parsedProfile = JSON.parse(cachedProfileStr);
+            if (parsedProfile.uid === uid || parsedProfile.uid === "local-user") {
+              const profileWithUid = { ...parsedProfile, uid };
+              setUserProfile(profileWithUid);
+              setCurrentUser(firebaseUser);
+              
+              if (cachedSessionsStr) {
+                try {
+                  const parsedSessions = JSON.parse(cachedSessionsStr);
+                  setUserSessions(parsedSessions);
+                } catch (e) {
+                  console.warn("Error parsing cached sessions on startup:", e);
+                }
+              }
+              setIsAuthLoading(false); // Instantly dismiss loading screen if we have cached data
+            }
+          } catch (e) {
+            console.warn("Error loading cached profile on startup:", e);
           }
+        }
 
-          const sessions = await fetchUserSessions(firebaseUser.uid, sessionsLimit);
+        // 2. Query Firestore in parallel in the background to ensure data syncs with zero lag
+        try {
+          const [profile, sessions] = await Promise.all([
+            getOrCreateUserProfile(
+              uid,
+              firebaseUser.email || "",
+              firebaseUser.displayName,
+              firebaseUser.photoURL
+            ),
+            fetchUserSessions(uid, sessionsLimit)
+          ]);
+
+          setUserProfile(profile);
+          setCurrentUser(firebaseUser);
           setUserSessions(sessions);
-          try {
-            localStorage.setItem(`focuson_sessions_${firebaseUser.uid}`, JSON.stringify(sessions));
-          } catch (storageErr) {
-            console.warn("Storage quota exceeded or private tab: cannot cache sessions locally.", storageErr);
+
+          if (sessions.length > 0 && !profile.completedOnboarding) {
+            const nextProfile = { ...profile, completedOnboarding: true };
+            setUserProfile(nextProfile);
+            updateUserProfile(uid, { completedOnboarding: true }).catch(err => {
+              console.error("Background onboarding completion update failed:", err);
+            });
           }
         } catch (err) {
-          console.error("Firestore user profile/session loading error (falling back to cache):", err);
-          setIsOfflineMode(true);
-
-          // Try to recover from local storage cache
-          let fallbackProfile: UserProfile | null = null;
-          try {
-            const cachedProfileStr = localStorage.getItem(`focuson_profile_${firebaseUser.uid}`);
-            if (cachedProfileStr) {
-              fallbackProfile = JSON.parse(cachedProfileStr);
-            }
-          } catch (cacheErr) {
-            console.error("Failed to read cached profile:", cacheErr);
-          }
-
-          if (fallbackProfile) {
-            setUserProfile(fallbackProfile);
-          } else {
-            // Generate a default temporary offline profile to ensure app does not crash
-            const defaultOfflineProfile: UserProfile = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || "",
-              displayName: firebaseUser.displayName || "Offline FocusOn User",
-              photoURL: firebaseUser.photoURL || null,
-              createdAt: new Date().toISOString(),
-              adhdMode: false,
-              weeklyGoalMinutes: 150,
-              projects: DEFAULT_PROJECTS
-            };
-            setUserProfile(defaultOfflineProfile);
-          }
-
-          let fallbackSessions: FocusSession[] = [];
-          try {
-            const cachedSessionsStr = localStorage.getItem(`focuson_sessions_${firebaseUser.uid}`);
-            if (cachedSessionsStr) {
-              fallbackSessions = JSON.parse(cachedSessionsStr);
-            }
-          } catch (cacheErr) {
-            console.error("Failed to read cached sessions:", cacheErr);
-          }
-          setUserSessions(fallbackSessions);
+          console.error("Firestore user profile loading error:", err);
         }
       } else {
-        setCurrentUser(null);
-        if (!isGuestMode) {
+        const storedProfileStr = localStorage.getItem("focuson_profile");
+        if (storedProfileStr) {
+          try {
+            const parsed = JSON.parse(storedProfileStr);
+            if (parsed.uid === "local-user") {
+              setUserProfile(parsed);
+              setCurrentUser({
+                uid: "local-user",
+                email: parsed.email,
+                displayName: parsed.displayName
+              } as any);
+              const sessions = await fetchUserSessions("local-user", sessionsLimit);
+              setUserSessions(sessions);
+              if (sessions.length > 0 && !parsed.completedOnboarding) {
+                const nextParsed = { ...parsed, completedOnboarding: true };
+                setUserProfile(nextParsed);
+                updateUserProfile("local-user", { completedOnboarding: true }).catch(err => {
+                  console.error("Background local onboarding update failed:", err);
+                });
+              }
+            } else {
+              setCurrentUser(null);
+              setUserProfile(null);
+              setUserSessions([]);
+            }
+          } catch (err) {
+            setCurrentUser(null);
+            setUserProfile(null);
+            setUserSessions([]);
+          }
+        } else {
+          setCurrentUser(null);
           setUserProfile(null);
           setUserSessions([]);
         }
@@ -268,92 +270,46 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [isGuestMode, sessionsLimit]);
+  }, [sessionsLimit]);
 
-  // Load guest sandbox data from localStorage if and only if Guest Mode is selected
-  useEffect(() => {
-    if (isGuestMode) {
-      const storedGuestProfile = localStorage.getItem("focuson_guest_profile");
-      const storedGuestSessions = localStorage.getItem("focuson_guest_sessions");
+  // Handle local user access pathway
+  const handleGuestAccess = async (customName?: string) => {
+    setIsAuthLoading(true);
+    const nameToUse = customName?.trim() || "Sandbox Visitor";
+    const defaultProfile: UserProfile = {
+      uid: "local-user",
+      email: "user@focuson.local",
+      displayName: nameToUse,
+      photoURL: null,
+      createdAt: new Date().toISOString(),
+      adhdMode: false,
+      weeklyGoalMinutes: 150,
+      projects: DEFAULT_PROJECTS,
+      completedOnboarding: false
+    };
+    setUserProfile(defaultProfile);
+    setCurrentUser({
+      uid: "local-user",
+      email: "user@focuson.local",
+      displayName: nameToUse
+    } as any);
+    localStorage.setItem("focuson_profile", JSON.stringify(defaultProfile));
 
-      if (storedGuestProfile) {
-        const parsed = JSON.parse(storedGuestProfile);
-        if (!parsed.projects || parsed.projects.length === 0) {
-          parsed.projects = DEFAULT_PROJECTS;
-          localStorage.setItem("focuson_guest_profile", JSON.stringify(parsed));
-        }
-        setUserProfile(parsed);
-      } else {
-        const defaultGuestProfile: UserProfile = {
-          uid: "guest",
-          email: "guest@focuson.io",
-          displayName: "Sandbox Visitor",
-          photoURL: null,
-          createdAt: new Date().toISOString(),
-          adhdMode: false,
-          weeklyGoalMinutes: 150,
-          projects: DEFAULT_PROJECTS
-        };
-        setUserProfile(defaultGuestProfile);
-        localStorage.setItem("focuson_guest_profile", JSON.stringify(defaultGuestProfile));
-      }
-
-      if (storedGuestSessions) {
-        setUserSessions(JSON.parse(storedGuestSessions));
-      } else {
-        // Initial clean dummy entries for nice UX presentation
-        const seedSessions: FocusSession[] = [
-          {
-            id: "1",
-            userId: "guest",
-            taskName: "Database design of main API",
-            tinyStep: "Write out 5 schemas in text file",
-            originalDurationMinutes: 25,
-            actualDurationSeconds: 1500,
-            completed: true,
-            status: "completed",
-            createdAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
-            dateStr: new Date(Date.now() - 36 * 3600 * 1000).toISOString().split("T")[0],
-            reflectionNotes: "Completed schema definitions. Discovered that keeping them modular was more scalable.",
-            nextStepSuggested: "Test primary signup routing controllers",
-            stuckCount: 1,
-            distractionCheckInCount: 1
-          },
-          {
-            id: "2",
-            userId: "guest",
-            taskName: "UI Landing page sketch",
-            tinyStep: "Draw outline on paper or wireframe",
-            originalDurationMinutes: 20,
-            actualDurationSeconds: 1200,
-            completed: true,
-            status: "completed",
-            createdAt: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
-            dateStr: new Date(Date.now() - 12 * 3600 * 1000).toISOString().split("T")[0],
-            reflectionNotes: "Drew 3 layout variations. Picked version 2 for its serene aesthetic space.",
-            nextStepSuggested: "Code the header layout",
-            stuckCount: 0,
-            distractionCheckInCount: 0
-          }
-        ];
-        setUserSessions(seedSessions);
-        localStorage.setItem("focuson_guest_sessions", JSON.stringify(seedSessions));
-      }
+    const sessions = await fetchUserSessions("local-user", sessionsLimit);
+    setUserSessions(sessions);
+    if (sessions.length > 0) {
+      const updatedProfile = { ...defaultProfile, completedOnboarding: true };
+      setUserProfile(updatedProfile);
+      updateUserProfile("local-user", { completedOnboarding: true }).catch(err => {
+        console.error("Background local-user onboarding update failed:", err);
+      });
     }
-  }, [isGuestMode]);
-
-  // Handle Guest user pathway log entry
-  const handleGuestAccess = () => {
-    setIsGuestMode(true);
+    setIsAuthLoading(false);
   };
 
-  const handleSignOut = async () => {
-    try {
-      await logOut();
-    } catch (e) {
-      console.warn("Firebase signout failed:", e);
-    }
-    setIsGuestMode(false);
+  const handleSignOut = () => {
+    auth.signOut();
+    localStorage.removeItem("focuson_profile");
     setCurrentUser(null);
     setUserProfile(null);
     setUserSessions([]);
@@ -362,140 +318,45 @@ export default function App() {
 
   // Profile data updating helper
   const handleUpdateProfile = async (updates: Partial<UserProfile>) => {
-    if (!userProfile) return;
+    if (!userProfile || !currentUser) return;
     const nextProfile = { ...userProfile, ...updates };
     setUserProfile(nextProfile);
-
-    if (currentUser) {
-      try {
-        await updateUserProfile(currentUser.uid, updates);
-        try {
-          localStorage.setItem(`focuson_profile_${currentUser.uid}`, JSON.stringify(nextProfile));
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded or private tab: cannot cache profile update locally.", storageErr);
-        }
-      } catch (err) {
-        console.error("Failed to update profile to Firestore, caching locally:", err);
-        setIsOfflineMode(true);
-        try {
-          localStorage.setItem(`focuson_profile_${currentUser.uid}`, JSON.stringify(nextProfile));
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded or private tab: cannot cache profile update locally.", storageErr);
-        }
-      }
-    } else if (isGuestMode) {
-      localStorage.setItem("focuson_guest_profile", JSON.stringify(nextProfile));
-    }
+    await updateUserProfile(currentUser.uid, updates);
   };
 
   // Save session record helper
   const handleSaveSession = async (sessionData: Omit<FocusSession, "id">) => {
-    if (currentUser) {
-      try {
-        await saveFocusSession(sessionData);
-        const updatedList = await fetchUserSessions(currentUser.uid, sessionsLimit);
-        setUserSessions(updatedList);
-        try {
-          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(updatedList));
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
-        }
-      } catch (err) {
-        console.error("Failed to save session to Firestore, caching locally:", err);
-        setIsOfflineMode(true);
-        // Fallback session so user sees it instantly
-        const fallbackSession: FocusSession = {
-          id: `offline_sess_${Date.now()}`,
-          ...sessionData
-        };
-        const updatedList = [fallbackSession, ...userSessions];
-        setUserSessions(updatedList);
-        try {
-          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(updatedList));
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
-        }
-      }
-    } else if (isGuestMode) {
-      const freshIndexId = `guest_session_${Date.now()}`;
-      const newSession: FocusSession = { id: freshIndexId, ...sessionData };
-      const updatedList = [newSession, ...userSessions];
-      setUserSessions(updatedList);
-      localStorage.setItem("focuson_guest_sessions", JSON.stringify(updatedList));
-    }
+    if (!currentUser) return;
+    const generatedId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const sessionWithUser = { ...sessionData, userId: currentUser.uid, id: generatedId } as FocusSession;
+    
+    // 1. Optimistically update local session state instantly
+    setUserSessions(prev => [sessionWithUser, ...prev]);
+
+    // 2. Perform the database write in the background as non-blocking
+    saveFocusSession(sessionWithUser, generatedId).catch(err => {
+      console.error("Background focus session save failed:", err);
+    });
   };
 
   const handleDeleteHistory = async () => {
-    if (currentUser) {
-      await deleteAllUserSessions(currentUser.uid);
-      setUserSessions([]);
-    } else if (isGuestMode) {
-      setUserSessions([]);
-      localStorage.removeItem("focuson_guest_sessions");
-    }
+    if (!currentUser) return;
+    await deleteAllUserSessions(currentUser.uid);
+    setUserSessions([]);
   };
 
   const handleFactoryReset = async () => {
-    if (currentUser) {
-      // 1. Delete all session records from database
-      await deleteAllUserSessions(currentUser.uid);
-      setUserSessions([]);
-
-      // 2. Clear out existing preferences and set back to clean defaults
-      const defaults = {
-        adhdMode: false,
-        weeklyGoalMinutes: 150
-      };
-      await updateUserProfile(currentUser.uid, defaults);
-      setUserProfile(prev => prev ? { ...prev, ...defaults } : null);
-    } else if (isGuestMode) {
-      // 1. Wipe all local storage caches instantly
-      localStorage.removeItem("focuson_guest_sessions");
-      localStorage.removeItem("focuson_guest_profile");
-
-      // 2. Force re-seed clean default guest profile & clear logs
-      setUserSessions([]);
-      const defaultGuestProfile: UserProfile = {
-        uid: "guest",
-        email: "guest@focuson.io",
-        displayName: "Sandbox Visitor",
-        photoURL: null,
-        createdAt: new Date().toISOString(),
-        adhdMode: false,
-        weeklyGoalMinutes: 150
-      };
-      setUserProfile(defaultGuestProfile);
-      localStorage.setItem("focuson_guest_profile", JSON.stringify(defaultGuestProfile));
-    }
+    auth.signOut();
+    localStorage.removeItem("focuson_sessions");
+    localStorage.removeItem("focuson_profile");
+    setUserSessions([]);
+    setUserProfile(null);
+    setCurrentUser(null);
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (currentUser) {
-      try {
-        await deleteUserSession(sessionId);
-        const nextList = userSessions.filter(s => s.id !== sessionId);
-        setUserSessions(nextList);
-        try {
-          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextList));
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
-        }
-      } catch (err) {
-        console.error("Failed to delete session on Firestore:", err);
-        setIsOfflineMode(true);
-        const nextList = userSessions.filter(s => s.id !== sessionId);
-        setUserSessions(nextList);
-        try {
-          localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextList));
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
-        }
-      }
-    } else if (isGuestMode) {
-      const updatedList = userSessions.filter(s => s.id !== sessionId);
-      setUserSessions(updatedList);
-      localStorage.setItem("focuson_guest_sessions", JSON.stringify(updatedList));
-    }
+    await deleteUserSession(sessionId);
+    setUserSessions(prev => prev.filter(s => s.id !== sessionId));
   };
 
   const handleCreateProject = async (name: string, color: string) => {
@@ -554,31 +415,12 @@ export default function App() {
     const targetSession = nextSessions.find(s => s.id === sessionId);
     if (targetSession) {
       const { id, ...sessionPayload } = targetSession;
-      if (currentUser) {
-        try {
-          await saveFocusSession(sessionPayload, sessionId);
-          try {
-            localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextSessions));
-          } catch (storageErr) {
-            console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
-          }
-        } catch (err) {
-          console.error("Failed to update session project on Firestore:", err);
-          setIsOfflineMode(true);
-          try {
-            localStorage.setItem(`focuson_sessions_${currentUser.uid}`, JSON.stringify(nextSessions));
-          } catch (storageErr) {
-            console.warn("Storage quota exceeded or private tab: cannot cache sessions list locally.", storageErr);
-          }
-        }
-      } else if (isGuestMode) {
-        localStorage.setItem("focuson_guest_sessions", JSON.stringify(nextSessions));
-      }
+      await saveFocusSession(sessionPayload, sessionId);
     }
   };
 
   // Graceful initial loader view
-  if (isAuthLoading && !isGuestMode) {
+  if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#050608] flex flex-col items-center justify-center text-zinc-100 relative overflow-hidden">
         {/* Layered ambient backdrop glows */}
@@ -606,7 +448,7 @@ export default function App() {
   }
 
   // Auth gate
-  if (!currentUser && !isGuestMode) {
+  if (!currentUser) {
     return (
       <AuthScreen 
         onGuestAccess={handleGuestAccess} 
@@ -691,26 +533,12 @@ export default function App() {
                   Overdrive
                 </span>
               )}
-              {isOfflineMode && (
-                <span className="px-2.5 py-1.5 rounded border border-[#EF4444]/30 text-[9px] font-mono text-[#EF4444]/90 uppercase tracking-widest bg-[#EF4444]/5 flex items-center gap-1.5 transition-all duration-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] animate-pulse" />
-                  Offline
-                </span>
-              )}
               <div className="px-3 py-1.5 border border-border-app bg-bg-card/40 backdrop-blur-sm rounded flex items-center gap-2 transition-colors duration-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-text-primary shrink-0 transition-colors duration-300" />
                 <span className="text-[10px] font-mono text-text-secondary transition-colors duration-300">
                   {userSessions.filter(s => s.completed).length} Sessions
                 </span>
               </div>
-              <button
-                onClick={handleSignOut}
-                id="header-logout-btn"
-                className="p-2 border border-border-app bg-bg-card/40 hover:bg-bg-card/80 backdrop-blur-sm rounded text-text-secondary hover:text-red-400 hover:border-red-950/40 transition-all cursor-pointer flex items-center justify-center"
-                title="Sign Out of FocusOn"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
             </div>
           </motion.header>
         )}
@@ -747,7 +575,7 @@ export default function App() {
                   sessions={userSessions} 
                   profile={userProfile}
                   onDeleteSession={handleDeleteSession} 
-                  projects={userProfile?.projects || DEFAULT_PROJECTS}
+                  projects={userProfile.projects || DEFAULT_PROJECTS}
                   onCreateProject={handleCreateProject}
                   onUpdateSessionProject={handleUpdateSessionProject}
                   onLoadMore={handleLoadMore}
@@ -766,7 +594,7 @@ export default function App() {
               >
                 <ProjectsTab 
                   sessions={userSessions} 
-                  projects={userProfile?.projects || DEFAULT_PROJECTS}
+                  projects={userProfile.projects || DEFAULT_PROJECTS}
                   onCreateProject={handleCreateProject}
                   onUpdateProject={handleUpdateProject}
                   onDeleteProject={handleDeleteProject}

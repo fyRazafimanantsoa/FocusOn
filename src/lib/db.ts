@@ -1,4 +1,19 @@
 import { UserProfile, FocusSession, DistractionLog, InsightStats, Project } from "../types";
+import { db, auth } from "./firebase";
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  limit, 
+  getDocs, 
+  deleteDoc,
+  writeBatch
+} from "firebase/firestore";
 
 export const DEFAULT_PROJECTS: Project[] = [
   { id: "work", name: "Work", color: "#3B82F6" },
@@ -6,156 +21,6 @@ export const DEFAULT_PROJECTS: Project[] = [
   { id: "personal", name: "Personal", color: "#10B981" },
   { id: "health", name: "Health & Wellness", color: "#F43F5E" }
 ];
-
-// User Profile management
-export async function getOrCreateUserProfile(uid: string, email: string, displayName: string | null, photoURL: string | null): Promise<UserProfile> {
-  const cacheKey = `focuson_profile_${uid}`;
-  const cached = localStorage.getItem(cacheKey);
-  if (cached) {
-    try {
-      const data = JSON.parse(cached) as UserProfile;
-      if (!data.projects || data.projects.length === 0) {
-        data.projects = DEFAULT_PROJECTS;
-        localStorage.setItem(cacheKey, JSON.stringify(data));
-      }
-      return data;
-    } catch (e) {
-      console.error("Failed to parse cached profile", e);
-    }
-  }
-
-  const freshProfile: UserProfile = {
-    uid,
-    email,
-    displayName: displayName || email.split("@")[0] || "FocusOn User",
-    photoURL,
-    createdAt: new Date().toISOString(),
-    adhdMode: false,
-    weeklyGoalMinutes: 150,
-    projects: DEFAULT_PROJECTS
-  };
-  localStorage.setItem(cacheKey, JSON.stringify(freshProfile));
-  return freshProfile;
-}
-
-export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
-  const cacheKey = `focuson_profile_${uid}`;
-  const cached = localStorage.getItem(cacheKey);
-  let profile: UserProfile;
-  if (cached) {
-    try {
-      profile = { ...JSON.parse(cached), ...updates };
-    } catch {
-      profile = {
-        uid,
-        email: "",
-        displayName: "FocusOn User",
-        photoURL: null,
-        createdAt: new Date().toISOString(),
-        adhdMode: false,
-        weeklyGoalMinutes: 150,
-        projects: DEFAULT_PROJECTS,
-        ...updates
-      };
-    }
-  } else {
-    profile = {
-      uid,
-      email: "",
-      displayName: "FocusOn User",
-      photoURL: null,
-      createdAt: new Date().toISOString(),
-      adhdMode: false,
-      weeklyGoalMinutes: 150,
-      projects: DEFAULT_PROJECTS,
-      ...updates
-    };
-  }
-  localStorage.setItem(cacheKey, JSON.stringify(profile));
-}
-
-// Focus Sessions CRUD
-export async function fetchUserSessions(uid: string, limitCount = 50): Promise<FocusSession[]> {
-  const cacheKey = `focuson_sessions_${uid}`;
-  const cached = localStorage.getItem(cacheKey);
-  if (cached) {
-    try {
-      const list = JSON.parse(cached) as FocusSession[];
-      return list.slice(0, limitCount);
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
-
-export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: string): Promise<string> {
-  const uid = session.userId;
-  const cacheKey = `focuson_sessions_${uid}`;
-  const cached = localStorage.getItem(cacheKey);
-  let list: FocusSession[] = [];
-  if (cached) {
-    try {
-      list = JSON.parse(cached);
-    } catch {}
-  }
-
-  const targetId = id || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-  const existingIdx = list.findIndex(s => s.id === targetId);
-
-  const fullSession: FocusSession = {
-    ...session,
-    id: targetId
-  };
-
-  if (existingIdx >= 0) {
-    list[existingIdx] = fullSession;
-  } else {
-    list.unshift(fullSession);
-  }
-
-  localStorage.setItem(cacheKey, JSON.stringify(list));
-  return targetId;
-}
-
-export async function deleteUserSession(sessionId: string): Promise<void> {
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith("focuson_sessions_")) {
-      try {
-        const val = localStorage.getItem(key);
-        if (val) {
-          const list = JSON.parse(val) as FocusSession[];
-          const filtered = list.filter(s => s.id !== sessionId);
-          if (filtered.length !== list.length) {
-            localStorage.setItem(key, JSON.stringify(filtered));
-            break;
-          }
-        }
-      } catch {}
-    }
-  }
-}
-
-export async function deleteAllUserSessions(uid: string): Promise<void> {
-  const cacheKey = `focuson_sessions_${uid}`;
-  localStorage.removeItem(cacheKey);
-}
-
-export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<string> {
-  const targetId = `dist_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-  const cacheKey = `focuson_distractions_${log.userId || "anonymous"}`;
-  let list: any[] = [];
-  try {
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      list = JSON.parse(cached);
-    }
-  } catch {}
-  list.unshift({ ...log, id: targetId });
-  localStorage.setItem(cacheKey, JSON.stringify(list));
-  return targetId;
-}
 
 // Local YYYY-MM-DD Date string generator
 export function getLocalDateStr(date: Date = new Date()): string {
@@ -174,13 +39,302 @@ export function parseLocalDate(dateStr: string): Date {
   return new Date(dateStr);
 }
 
+// User Profile management
+export async function getOrCreateUserProfile(
+  uid: string,
+  email: string,
+  displayName: string | null,
+  photoURL: string | null
+): Promise<UserProfile> {
+  const isLocal = uid === "local-user";
+
+  if (!isLocal) {
+    try {
+      const userRef = doc(db, "users", uid);
+      const userSnap = await getDoc(userRef);
+
+      if (userSnap.exists()) {
+        const data = userSnap.data() as UserProfile;
+        const updatedProfile = {
+          ...data,
+          completedOnboarding: data.completedOnboarding ?? true,
+          projects: (!data.projects || data.projects.length === 0) ? DEFAULT_PROJECTS : data.projects
+        };
+        // Cache locally for guest/local fallback
+        localStorage.setItem("focuson_profile_" + uid, JSON.stringify(updatedProfile));
+        localStorage.setItem("focuson_profile", JSON.stringify(updatedProfile));
+        return updatedProfile;
+      } else {
+        const freshProfile: UserProfile = {
+          uid,
+          email: email || "user@focuson.app",
+          displayName: displayName || "FocusOn Pilot",
+          photoURL,
+          createdAt: new Date().toISOString(),
+          adhdMode: false,
+          weeklyGoalMinutes: 150,
+          projects: DEFAULT_PROJECTS,
+          completedOnboarding: false
+        };
+        await setDoc(userRef, freshProfile);
+        // Cache locally
+        localStorage.setItem("focuson_profile_" + uid, JSON.stringify(freshProfile));
+        localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
+        return freshProfile;
+      }
+    } catch (err) {
+      console.warn("Firestore error fetching user profile, falling back to local storage:", err);
+    }
+  }
+
+  // Fallback to Local Storage for guest / local mode caching
+  const storedKey = isLocal ? "focuson_profile" : "focuson_profile_" + uid;
+  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_profile");
+  if (stored) {
+    const data = JSON.parse(stored) as UserProfile;
+    const dataWithUid: UserProfile = {
+      ...data,
+      uid: isLocal ? "local-user" : uid, // retain correct uid
+      completedOnboarding: data.completedOnboarding ?? true,
+      projects: (!data.projects || data.projects.length === 0) ? DEFAULT_PROJECTS : data.projects
+    };
+    localStorage.setItem(storedKey, JSON.stringify(dataWithUid));
+    localStorage.setItem("focuson_profile", JSON.stringify(dataWithUid));
+    return dataWithUid;
+  } else {
+    const freshProfile: UserProfile = {
+      uid: isLocal ? "local-user" : uid,
+      email: email || (isLocal ? "user@focuson.local" : "user@focuson.app"),
+      displayName: displayName || "FocusOn Pilot",
+      photoURL: isLocal ? null : photoURL,
+      createdAt: new Date().toISOString(),
+      adhdMode: false,
+      weeklyGoalMinutes: 150,
+      projects: DEFAULT_PROJECTS,
+      completedOnboarding: false
+    };
+    localStorage.setItem(storedKey, JSON.stringify(freshProfile));
+    localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
+    return freshProfile;
+  }
+}
+
+export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
+  const isLocal = uid === "local-user";
+
+  if (!isLocal) {
+    try {
+      const userRef = doc(db, "users", uid);
+      await setDoc(userRef, updates, { merge: true });
+    } catch (err) {
+      console.error("Error updating user profile in Firestore:", err);
+    }
+  }
+
+  // Always keep local storage updated in case of guest/local fallback
+  const storedKey = isLocal ? "focuson_profile" : "focuson_profile_" + uid;
+  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_profile");
+  if (stored) {
+    const current = JSON.parse(stored) as UserProfile;
+    const updated = { ...current, ...updates, uid };
+    localStorage.setItem(storedKey, JSON.stringify(updated));
+    localStorage.setItem("focuson_profile", JSON.stringify(updated));
+  } else {
+    const freshProfile: UserProfile = {
+      uid,
+      email: isLocal ? "user@focuson.local" : "user@focuson.app",
+      displayName: "FocusOn Pilot",
+      photoURL: null,
+      createdAt: new Date().toISOString(),
+      adhdMode: false,
+      weeklyGoalMinutes: 150,
+      projects: DEFAULT_PROJECTS,
+      ...updates
+    };
+    localStorage.setItem(storedKey, JSON.stringify(freshProfile));
+    localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
+  }
+}
+
+// Focus Sessions CRUD
+export async function fetchUserSessions(uid: string, limitCount = 50): Promise<FocusSession[]> {
+  const isLocal = uid === "local-user";
+
+  if (!isLocal) {
+    try {
+      const sessionsRef = collection(db, "sessions");
+      const q = query(
+        sessionsRef,
+        where("userId", "==", uid),
+        orderBy("createdAt", "desc"),
+        limit(limitCount)
+      );
+      const querySnapshot = await getDocs(q);
+      const sessions: FocusSession[] = [];
+      querySnapshot.forEach((doc) => {
+        sessions.push({ id: doc.id, ...doc.data() } as FocusSession);
+      });
+      // Synchronize with local storage for guest/local caching
+      localStorage.setItem("focuson_sessions_" + uid, JSON.stringify(sessions));
+      localStorage.setItem("focuson_sessions", JSON.stringify(sessions));
+      return sessions;
+    } catch (err) {
+      console.warn("Firestore error fetching user sessions, falling back to local storage:", err);
+    }
+  }
+
+  // Fallback to local storage
+  const storedKey = isLocal ? "focuson_sessions" : "focuson_sessions_" + uid;
+  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_sessions");
+  if (stored) {
+    const list = JSON.parse(stored) as FocusSession[];
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limitCount);
+  } else {
+    // Initial clean dummy entries for nice UX presentation
+    const seedSessions: FocusSession[] = [
+      {
+        id: "1",
+        userId: uid,
+        taskName: "Database design of main API",
+        tinyStep: "Write out 5 schemas in text file",
+        originalDurationMinutes: 25,
+        actualDurationSeconds: 1500,
+        completed: true,
+        status: "completed",
+        createdAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
+        dateStr: new Date(Date.now() - 36 * 3600 * 1000).toISOString().split("T")[0],
+        reflectionNotes: "Completed schema definitions. Discovered that keeping them modular was more scalable.",
+        nextStepSuggested: "Test primary signup routing controllers",
+        stuckCount: 1,
+        distractionCheckInCount: 1
+      },
+      {
+        id: "2",
+        userId: uid,
+        taskName: "UI Landing page sketch",
+        tinyStep: "Draw outline on paper or wireframe",
+        originalDurationMinutes: 20,
+        actualDurationSeconds: 1200,
+        completed: true,
+        status: "completed",
+        createdAt: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
+        dateStr: new Date(Date.now() - 12 * 3600 * 1000).toISOString().split("T")[0],
+        reflectionNotes: "Drew 3 layout variations. Picked version 2 for its serene aesthetic space.",
+        nextStepSuggested: "Code the header layout",
+        stuckCount: 0,
+        distractionCheckInCount: 0
+      }
+    ];
+    localStorage.setItem(storedKey, JSON.stringify(seedSessions));
+    localStorage.setItem("focuson_sessions", JSON.stringify(seedSessions));
+    return seedSessions.slice(0, limitCount);
+  }
+}
+
+export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: string): Promise<string> {
+  const isLocal = session.userId === "local-user";
+  const generatedId = id || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  if (!isLocal) {
+    try {
+      const sessionRef = doc(db, "sessions", generatedId);
+      await setDoc(sessionRef, { ...session, id: generatedId }, { merge: true });
+      return generatedId;
+    } catch (err) {
+      console.error("Error saving focus session to Firestore:", err);
+    }
+  }
+
+  // Save/update locally
+  const storedKey = isLocal ? "focuson_sessions" : "focuson_sessions_" + session.userId;
+  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_sessions");
+  let list = stored ? (JSON.parse(stored) as FocusSession[]) : [];
+  
+  const existingIdx = list.findIndex(s => s.id === generatedId);
+  const sessionWithId = { id: generatedId, ...session } as FocusSession;
+  if (existingIdx > -1) {
+    list[existingIdx] = { ...list[existingIdx], ...sessionWithId };
+  } else {
+    list.push(sessionWithId);
+  }
+  localStorage.setItem(storedKey, JSON.stringify(list));
+  localStorage.setItem("focuson_sessions", JSON.stringify(list));
+  return generatedId;
+}
+
+export async function deleteUserSession(sessionId: string): Promise<void> {
+  // First, try deleting from Firestore if we can find a matching session or if we are logged in
+  const user = auth.currentUser;
+  if (user) {
+    try {
+      const sessionRef = doc(db, "sessions", sessionId);
+      await deleteDoc(sessionRef);
+    } catch (err) {
+      console.error("Error deleting session from Firestore:", err);
+    }
+  }
+
+  const storedKeys = user ? ["focuson_sessions_" + user.uid, "focuson_sessions"] : ["focuson_sessions"];
+  storedKeys.forEach(key => {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const list = JSON.parse(stored) as FocusSession[];
+      const filtered = list.filter(s => s.id !== sessionId);
+      localStorage.setItem(key, JSON.stringify(filtered));
+    }
+  });
+}
+
+export async function deleteAllUserSessions(uid: string): Promise<void> {
+  const isLocal = uid === "local-user";
+
+  if (!isLocal) {
+    try {
+      const sessionsRef = collection(db, "sessions");
+      const q = query(sessionsRef, where("userId", "==", uid));
+      const querySnapshot = await getDocs(q);
+      const batch = writeBatch(db);
+      querySnapshot.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+    } catch (err) {
+      console.error("Error batch deleting sessions from Firestore:", err);
+    }
+  }
+
+  localStorage.removeItem("focuson_sessions_" + uid);
+  localStorage.removeItem("focuson_sessions");
+}
+
+export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<string> {
+  const isLocal = log.userId === "local-user";
+  const generatedId = `dist_${Date.now()}`;
+
+  if (!isLocal) {
+    try {
+      const distractionRef = doc(db, "distractions", generatedId);
+      await setDoc(distractionRef, { ...log, id: generatedId });
+    } catch (err) {
+      console.error("Error logging distraction to Firestore:", err);
+    }
+  }
+
+  const storedKey = isLocal ? "focuson_distractions" : "focuson_distractions_" + log.userId;
+  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_distractions");
+  let list = stored ? (JSON.parse(stored) as DistractionLog[]) : [];
+  const newLog = { id: generatedId, ...log } as DistractionLog;
+  list.push(newLog);
+  localStorage.setItem(storedKey, JSON.stringify(list));
+  localStorage.setItem("focuson_distractions", JSON.stringify(list));
+  return generatedId;
+}
+
 // Generate real insight statistics based on records
 export function calculateInsights(sessions: FocusSession[]): InsightStats {
   const completed = sessions.filter(s => s.completed);
   const totalMinutes = completed.reduce((acc, s) => acc + (s.actualDurationSeconds / 60), 0);
   
-  // Calculate simple streak (consecutive calendar days ending today or yesterday)
-  // Let's analyze dates
   const uniqueDates = Array.from(new Set(completed.map(s => s.dateStr))).sort().reverse();
   let streak = 0;
   if (uniqueDates.length > 0) {
@@ -189,7 +343,6 @@ export function calculateInsights(sessions: FocusSession[]): InsightStats {
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = getLocalDateStr(yesterday);
     
-    // If the latest focus date is either today or yesterday, compute the streak
     if (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr) {
       streak = 1;
       let lastDate = parseLocalDate(uniqueDates[0]);
@@ -207,12 +360,8 @@ export function calculateInsights(sessions: FocusSession[]): InsightStats {
     }
   }
 
-  // Calculate intentional learning proportion: total checks vs learning choices would be checked,
-  // let's estimate or read logs. For the MVP, we can mock or estimate if data is lean.
-  const totalStuck = sessions.reduce((acc, s) => acc + (s.stuckCount || 0), 0);
   const totalDistractions = sessions.reduce((acc, s) => acc + (s.distractionCheckInCount || 0), 0);
   
-  // Time distribution
   let morning = 0;
   let afternoon = 0;
   let evening = 0;
