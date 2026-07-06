@@ -3,6 +3,8 @@ import express from "express";
 const app = express();
 app.use(express.json());
 
+const FIREBASE_API_KEY = "AIzaSyAK81XHflF2MyDLKCdE0V7QJi1zXPZTn3I";
+
 // Firestore REST Helper Maps
 function toFirestoreFields(obj: any): any {
   const fields: any = {};
@@ -94,7 +96,7 @@ app.get("/api/user-profile", async (req, res) => {
   if (!uid) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}`, {
+    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?key=${FIREBASE_API_KEY}`, {
       headers: { "Authorization": authHeader! }
     });
     if (response.status === 404) {
@@ -124,7 +126,7 @@ app.post("/api/user-profile", async (req, res) => {
     const keys = Object.keys(profileData);
     const queryParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
 
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?${queryParams}`, {
+    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?${queryParams}&key=${FIREBASE_API_KEY}`, {
       method: "PATCH",
       headers: {
         "Authorization": authHeader!,
@@ -152,7 +154,7 @@ app.get("/api/user-sessions", async (req, res) => {
   const limitCount = parseInt(req.query.limit as string || "50", 10);
 
   try {
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery`, {
+    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`, {
       method: "POST",
       headers: {
         "Authorization": authHeader!,
@@ -215,7 +217,7 @@ app.post("/api/user-sessions", async (req, res) => {
     const keys = Object.keys(session);
     const queryParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
 
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${id}?${queryParams}`, {
+    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${id}?${queryParams}&key=${FIREBASE_API_KEY}`, {
       method: "PATCH",
       headers: {
         "Authorization": authHeader!,
@@ -243,7 +245,7 @@ app.delete("/api/user-sessions/:id", async (req, res) => {
   const sessionId = req.params.id;
 
   try {
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}`, {
+    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}?key=${FIREBASE_API_KEY}`, {
       method: "DELETE",
       headers: {
         "Authorization": authHeader!
@@ -267,7 +269,7 @@ app.delete("/api/user-sessions", async (req, res) => {
   if (!uid) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    const listResponse = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery`, {
+    const listResponse = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`, {
       method: "POST",
       headers: {
         "Authorization": authHeader!,
@@ -298,7 +300,7 @@ app.delete("/api/user-sessions", async (req, res) => {
           const docName = entry.document.name;
           const parts = docName.split("/");
           const sessionId = parts[parts.length - 1];
-          await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}`, {
+          await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}?key=${FIREBASE_API_KEY}`, {
             method: "DELETE",
             headers: {
               "Authorization": authHeader!
@@ -331,7 +333,7 @@ app.post("/api/distraction-log", async (req, res) => {
     const keys = Object.keys(log);
     const queryParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
 
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/distractions/${id}?${queryParams}`, {
+    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/distractions/${id}?${queryParams}&key=${FIREBASE_API_KEY}`, {
       method: "PATCH",
       headers: {
         "Authorization": authHeader!,

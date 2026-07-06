@@ -246,19 +246,7 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
   const isLocal = session.userId === "local-user";
   const generatedId = id || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-  if (!isLocal) {
-    try {
-      await fetchWithAuth("/api/user-sessions", {
-        method: "POST",
-        body: JSON.stringify({ id: generatedId, session })
-      });
-      return generatedId;
-    } catch (err) {
-      console.error("Error saving focus session via API:", err);
-    }
-  }
-
-  // Save/update locally
+  // 1. Always save/update locally first to guarantee offline persistence and instant UI response
   const storedKey = isLocal ? "focuson_sessions" : "focuson_sessions_" + session.userId;
   const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_sessions");
   let list = stored ? (JSON.parse(stored) as FocusSession[]) : [];
@@ -272,6 +260,19 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
   }
   localStorage.setItem(storedKey, JSON.stringify(list));
   localStorage.setItem("focuson_sessions", JSON.stringify(list));
+
+  // 2. Sync to Firestore in the background if logged in
+  if (!isLocal) {
+    try {
+      await fetchWithAuth("/api/user-sessions", {
+        method: "POST",
+        body: JSON.stringify({ id: generatedId, session })
+      });
+    } catch (err) {
+      console.error("Error saving focus session via API:", err);
+    }
+  }
+
   return generatedId;
 }
 
