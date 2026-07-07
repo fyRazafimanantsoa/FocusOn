@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { UserProfile, FocusSession, Project } from "../types";
+import SecureProgressModal from "./SecureProgressModal";
 import { 
   Play, 
   ArrowRight, 
@@ -12,6 +13,8 @@ import {
   BookOpen, 
   HeartHandshake,
   Pause,
+  Minimize2,
+  Maximize2,
   AlertTriangle,
   CornerDownRight,
   RefreshCw,
@@ -136,22 +139,66 @@ type FocusState = "idle" | "tiny_step" | "focusing" | "paused" | "stuck_rescue" 
 type SessionMode = "single" | "interval";
 
 export default function FocusTab({ user, profile, lastSession, userSessions, onSessionSave, projects, onCreateProject, onStateSync }: FocusTabProps) {
+  // Load active session from localStorage if it exists
+  const savedSession = (() => {
+    try {
+      const data = localStorage.getItem("adhd_focus_active_session");
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed && typeof parsed === "object" && parsed.focusState) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to read active session from localStorage", e);
+    }
+    return null;
+  })();
+
+  const elapsedSeconds = (() => {
+    if (savedSession && ["focusing", "interval_break", "guilt_free_break"].includes(savedSession.focusState)) {
+      const lastTick = savedSession.lastTickTimestamp;
+      if (lastTick) {
+        const diff = Math.max(0, Math.floor((Date.now() - lastTick) / 1000));
+        // Clamp to remaining time to prevent skipping multiple intervals
+        if (savedSession.focusState === "guilt_free_break") {
+          return Math.min(diff, savedSession.guiltFreeRemaining || 0);
+        } else {
+          return Math.min(diff, savedSession.timeRemaining || 0);
+        }
+      }
+    }
+    return 0;
+  })();
+
   const theme = profile?.theme || "dark";
   // Core Focus states
-  const [focusState, setFocusState] = useState<FocusState>("idle");
+  const [focusState, setFocusState] = useState<FocusState>(savedSession ? savedSession.focusState : "idle");
+  const [prePausedState, setPrePausedState] = useState<FocusState>(savedSession ? (savedSession.prePausedState || "focusing") : "focusing");
+  const [isSecureModalOpen, setIsSecureModalOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [isCreatingProj, setIsCreatingProj] = useState(false);
   const [newProjName, setNewProjName] = useState("");
   const [newProjColor, setNewProjColor] = useState("#FFFFFF");
   const [isCreatingProjLoading, setIsCreatingProjLoading] = useState(false);
-  const [sessionMode, setSessionMode] = useState<SessionMode>("single");
-  const [taskName, setTaskName] = useState("");
-  const [tinyStep, setTinyStep] = useState("");
-  const [sessionMinutes, setSessionMinutes] = useState<number | "">(profile.adhdMode ? 20 : 25);
-  const [timeRemaining, setTimeRemaining] = useState((profile.adhdMode ? 20 : 25) * 60);
+  const [sessionMode, setSessionMode] = useState<SessionMode>(savedSession ? savedSession.sessionMode : "single");
+  const [taskName, setTaskName] = useState(savedSession ? savedSession.taskName : "");
+  const [tinyStep, setTinyStep] = useState(savedSession ? savedSession.tinyStep : "");
+  const [sessionMinutes, setSessionMinutes] = useState<number | "">(savedSession ? savedSession.sessionMinutes : (profile.adhdMode ? 20 : 25));
+  const [timeRemaining, setTimeRemaining] = useState<number>(() => {
+    if (savedSession) {
+      if (["focusing", "interval_break"].includes(savedSession.focusState)) {
+        return Math.max(0, savedSession.timeRemaining - elapsedSeconds);
+      }
+      return savedSession.timeRemaining;
+    }
+    return (profile.adhdMode ? 20 : 25) * 60;
+  });
   const [timeUnit, setTimeUnit] = useState<"min" | "hrs">("min");
   const [inputValue, setInputValue] = useState<string>(
-    profile.adhdMode ? "20" : "25"
+    savedSession 
+      ? (savedSession.sessionMinutes ? savedSession.sessionMinutes.toString() : (profile.adhdMode ? "20" : "25"))
+      : (profile.adhdMode ? "20" : "25")
   );
   const [showProjectSection, setShowProjectSection] = useState(false);
 
@@ -247,22 +294,22 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   };
 
   // Interactive micro-task sub-steps
-  const [subSteps, setSubSteps] = useState<{ id: string; text: string; completed: boolean }[]>([]);
+  const [subSteps, setSubSteps] = useState<{ id: string; text: string; completed: boolean }[]>(savedSession ? savedSession.subSteps : []);
   const [newSubStepText, setNewSubStepText] = useState("");
-  const [primaryCompleted, setPrimaryCompleted] = useState(false);
+  const [primaryCompleted, setPrimaryCompleted] = useState(savedSession ? !!savedSession.primaryCompleted : false);
 
   // Feature 1: Brain Dump Scratchpad during active focus
-  const [brainDumps, setBrainDumps] = useState<string[]>([]);
+  const [brainDumps, setBrainDumps] = useState<string[]>(savedSession ? savedSession.brainDumps : []);
   const [currentBrainDump, setCurrentBrainDump] = useState("");
   const [showNotesWidget, setShowNotesWidget] = useState(false);
 
-  // Feature 3: Silent Study Body Doubling Partners
+  // Feature 3: Silent Study Body Doubling Partners - Non-Developer Specific Tasks
   const [bodyDoublingEnabled, setBodyDoublingEnabled] = useState(true);
   const [partners, setPartners] = useState<{ id: string; name: string; task: string; progress: number }[]>([
-    { id: "p1", name: "Maya", task: "Coding UI Layout", progress: 34 },
-    { id: "p2", name: "Liam", task: "Writing Thesis Chapter 2", progress: 72 },
-    { id: "p3", name: "Elena", task: "Wireframing UX Flows", progress: 12 },
-    { id: "p4", name: "Aiden", task: "Answering critical emails", progress: 55 }
+    { id: "p1", name: "Maya", task: "Reading course textbook", progress: 34 },
+    { id: "p2", name: "Liam", task: "Drafting thesis outline", progress: 72 },
+    { id: "p3", name: "Elena", task: "Sketching layout ideas", progress: 12 },
+    { id: "p4", name: "Aiden", task: "Reviewing inbox & replying", progress: 55 }
   ]);
 
   // Feature 4: Ambient Audio Synthesizer (Web Audio API)
@@ -283,17 +330,25 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   });
 
   // Interval states
-  const [intervalCount, setIntervalCount] = useState<number | "">(4);
-  const [currentInterval, setCurrentInterval] = useState(1);
-  const [breakMinutes, setBreakMinutes] = useState<number | "">(5);
-  const [accumulatedFocusSeconds, setAccumulatedFocusSeconds] = useState(0);
+  const [intervalCount, setIntervalCount] = useState<number | "">(savedSession ? savedSession.intervalCount : 4);
+  const [currentInterval, setCurrentInterval] = useState(savedSession ? savedSession.currentInterval : 1);
+  const [breakMinutes, setBreakMinutes] = useState<number | "">(savedSession ? savedSession.breakMinutes : 5);
+  const [accumulatedFocusSeconds, setAccumulatedFocusSeconds] = useState(savedSession ? savedSession.accumulatedFocusSeconds : 0);
   
   // Reflection states
   const [completedNotes, setCompletedNotes] = useState("");
   const [nextStepCaptured, setNextStepCaptured] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showMomentumNotification, setShowMomentumNotification] = useState(false);
-  const [guiltFreeRemaining, setGuiltFreeRemaining] = useState(5 * 60);
+  const [guiltFreeRemaining, setGuiltFreeRemaining] = useState<number>(() => {
+    if (savedSession) {
+      if (savedSession.focusState === "guilt_free_break") {
+        return Math.max(0, savedSession.guiltFreeRemaining - elapsedSeconds);
+      }
+      return savedSession.guiltFreeRemaining;
+    }
+    return 5 * 60;
+  });
 
   // Counters to persist in the session
   const [stuckCount, setStuckCount] = useState(0);
@@ -301,6 +356,12 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   const [apparentActivity, setApparentActivity] = useState("");
   const [showAddTime, setShowAddTime] = useState(false);
   const [customAddMins, setCustomAddMins] = useState("");
+
+  // Minimized floating timer states
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [minimizedPosition, setMinimizedPosition] = useState({ x: 400, y: 300 });
+  const [minimizedSize, setMinimizedSize] = useState({ width: 280, height: 220 });
+  const [minimizedNoteText, setMinimizedNoteText] = useState("");
 
   const handleAddTime = (minsToAdd: number) => {
     setSessionMinutes(prev => (typeof prev === 'number' ? prev + minsToAdd : 25 + minsToAdd));
@@ -352,6 +413,54 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
     }
   }, [focusState, lastSession?.id, lastSession?.nextStepSuggested]);
 
+  // Position minimized widget in the bottom-right of the viewport upon mount/start
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setMinimizedPosition({
+        x: window.innerWidth - 300,
+        y: Math.max(80, window.innerHeight - 250)
+      });
+    }
+  }, []);
+
+  // Minimize timer automatically when leaving the tab, so they have a clean micro-view when returning
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (["focusing", "paused", "interval_break", "guilt_free_break"].includes(focusState)) {
+          setIsMinimized(true);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [focusState]);
+
+  // Sync browser tab title with ticking time
+  useEffect(() => {
+    if (["focusing", "interval_break", "guilt_free_break"].includes(focusState)) {
+      const formatted = formatTime(focusState === "guilt_free_break" ? guiltFreeRemaining : timeRemaining);
+      const prefix = focusState === "interval_break" ? "☕ Break" : "🎯 Focus";
+      document.title = `(${formatted}) ${prefix} - FocusOn`;
+    } else if (focusState === "paused") {
+      document.title = `⏸️ Paused - FocusOn`;
+    } else {
+      document.title = "FocusOn - ADHD Support";
+    }
+    return () => {
+      document.title = "FocusOn - ADHD Support";
+    };
+  }, [focusState, timeRemaining, guiltFreeRemaining]);
+
+  // Automatically exit minimized view if state transitions out of active timer states
+  useEffect(() => {
+    if (["idle", "reflecting", "tiny_step", "stuck_rescue", "distracted"].includes(focusState)) {
+      setIsMinimized(false);
+    }
+  }, [focusState]);
+
   // Resume last session next step if it exists
   const handleResumeLastSession = () => {
     initAudio();
@@ -364,11 +473,12 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
 
   const handlePauseToggle = () => {
     initAudio();
-    if (focusState === "focusing") {
+    if (focusState === "focusing" || focusState === "interval_break" || focusState === "guilt_free_break") {
+      setPrePausedState(focusState);
       setFocusState("paused");
       playEndSound();
     } else if (focusState === "paused") {
-      setFocusState("focusing");
+      setFocusState(prePausedState || "focusing");
       playStartSound();
     }
   };
@@ -402,6 +512,49 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
       breakMinutes: breakMinutes || 5 
     };
   }, [focusState, sessionMode, currentInterval, intervalCount, sessionMinutes, breakMinutes]);
+
+  // Save active session to localStorage on any relevant state change to handle background/minimize/reload
+  useEffect(() => {
+    if (["focusing", "paused", "interval_break", "guilt_free_break", "tiny_step", "stuck_rescue", "distracted"].includes(focusState)) {
+      const stateToSave = {
+        focusState,
+        prePausedState,
+        sessionMode,
+        taskName,
+        tinyStep,
+        subSteps,
+        sessionMinutes,
+        breakMinutes,
+        intervalCount,
+        currentInterval,
+        timeRemaining,
+        guiltFreeRemaining,
+        accumulatedFocusSeconds,
+        brainDumps,
+        primaryCompleted,
+        lastTickTimestamp: Date.now()
+      };
+      localStorage.setItem("adhd_focus_active_session", JSON.stringify(stateToSave));
+    } else {
+      localStorage.removeItem("adhd_focus_active_session");
+    }
+  }, [
+    focusState,
+    prePausedState,
+    sessionMode,
+    taskName,
+    tinyStep,
+    subSteps,
+    sessionMinutes,
+    breakMinutes,
+    intervalCount,
+    currentInterval,
+    timeRemaining,
+    guiltFreeRemaining,
+    accumulatedFocusSeconds,
+    brainDumps,
+    primaryCompleted
+  ]);
 
   const handleTimerZero = () => {
     playEndSound();
@@ -673,24 +826,10 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
           lastTickTime.current = now;
           if (focusState === "guilt_free_break") {
             if (sessionMode !== "single") {
-              setGuiltFreeRemaining((prev) => {
-                if (prev - delta <= 0) {
-                  workerRef.current?.postMessage('stop');
-                  handleGuiltFreeZero();
-                  return 0;
-                }
-                return prev - delta;
-              });
+              setGuiltFreeRemaining((prev) => Math.max(0, prev - delta));
             }
           } else {
-            setTimeRemaining((prev) => {
-              if (prev - delta <= 0) {
-                workerRef.current?.postMessage('stop');
-                handleTimerZero();
-                return 0;
-              }
-              return prev - delta;
-            });
+            setTimeRemaining((prev) => Math.max(0, prev - delta));
           }
         }
       };
@@ -706,6 +845,23 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
       workerRef.current?.postMessage('stop');
     }
   }, [focusState]);
+
+  // Clean transition triggers when remaining timer values hit zero
+  useEffect(() => {
+    if (focusState === "focusing" || focusState === "interval_break") {
+      if (timeRemaining <= 0) {
+        handleTimerZero();
+      }
+    }
+  }, [timeRemaining, focusState]);
+
+  useEffect(() => {
+    if (focusState === "guilt_free_break") {
+      if (guiltFreeRemaining <= 0) {
+        handleGuiltFreeZero();
+      }
+    }
+  }, [guiltFreeRemaining, focusState]);
 
   // Request stuck rescue
   const handleStuckRescue = () => {
@@ -812,19 +968,109 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
   const totalDurationSeconds = focusState === "interval_break" ? (bMin * 60) : (min * 60);
   const progressRatio = timeRemaining / totalDurationSeconds;
 
-  // Compute frequently repeated tasks for suggestions
+  // Compute frequently repeated tasks for suggestions, falling back to smart defaults for new users
   const frequentTasks = React.useMemo(() => {
     const counts = userSessions.reduce((acc, s) => {
       acc[s.taskName] = (acc[s.taskName] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
     
-    return Object.entries(counts)
-      .filter(([_, count]) => count > 3)
+    const computed = Object.entries(counts)
+      .filter(([_, count]) => count >= 1)
       .sort((a, b) => b[1] - a[1])
-      .map(([name]) => name)
-      .slice(0, 3); // top 3 suggestions
+      .map(([name]) => name);
+      
+    if (computed.length > 0) {
+      return computed.slice(0, 4);
+    }
+    
+    // Smart Defaults to bypass initial paralysis and guide first-time flow states
+    return [
+      "Draft weekly planner & goals",
+      "Outline project proposal",
+      "Review & reply to critical emails",
+      "Brainstorm creative content ideas"
+    ];
   }, [userSessions]);
+
+  // Draggable window pointer handlers
+  const handleDragMouseDown = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    // Only drag on left click or touch
+    if ('button' in e && e.button !== 0) return;
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    const startX = clientX - minimizedPosition.x;
+    const startY = clientY - minimizedPosition.y;
+    
+    const handleMouseMove = (moveEvent: MouseEvent | TouchEvent) => {
+      const currentX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
+      const currentY = 'touches' in moveEvent ? moveEvent.touches[0].clientY : moveEvent.clientY;
+      
+      const nextX = currentX - startX;
+      const nextY = currentY - startY;
+      
+      const maxX = window.innerWidth - minimizedSize.width - 10;
+      const maxY = window.innerHeight - minimizedSize.height - 10;
+      
+      setMinimizedPosition({
+        x: Math.max(10, Math.min(maxX, nextX)),
+        y: Math.max(10, Math.min(maxY, nextY))
+      });
+    };
+    
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("touchmove", handleMouseMove);
+      document.removeEventListener("touchend", handleMouseUp);
+    };
+    
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("touchmove", handleMouseMove, { passive: true });
+    document.addEventListener("touchend", handleMouseUp);
+  };
+
+  // Resizable window pointer handlers with limit to smallest size constraints
+  const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startWidth = minimizedSize.width;
+    const startHeight = minimizedSize.height;
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const startX = clientX;
+    const startY = clientY;
+    
+    const handleMouseMove = (moveEvent: MouseEvent | TouchEvent) => {
+      const currentX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
+      const currentY = 'touches' in moveEvent ? moveEvent.touches[0].clientY : moveEvent.clientY;
+      
+      const deltaX = currentX - startX;
+      const deltaY = currentY - startY;
+      
+      // Limit to smallest size: minimum width 250px and minimum height 185px
+      const newWidth = Math.max(250, startWidth + deltaX);
+      const newHeight = Math.max(185, startHeight + deltaY);
+      
+      setMinimizedSize({ width: newWidth, height: newHeight });
+    };
+    
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("touchmove", handleMouseMove);
+      document.removeEventListener("touchend", handleMouseUp);
+    };
+    
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("touchmove", handleMouseMove, { passive: true });
+    document.addEventListener("touchend", handleMouseUp);
+  };
 
   return (
     <div className="w-full max-w-4xl mx-auto py-2 px-1 flex flex-col justify-center min-h-[60vh] sm:min-h-[70vh] animate-fade-in" id="focus-tab-viewport">
@@ -861,6 +1107,33 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 </div>
               </div>
             </div>
+
+            {/* Guest Sandbox Loss-Aversion Protection Banner */}
+            {user?.uid === "local-user" && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-4 rounded bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 text-left flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm"
+              >
+                <div className="space-y-1 max-w-xl">
+                  <div className="flex items-center gap-1.5 text-amber-400 font-mono text-[9px] uppercase tracking-widest font-bold">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Guest Sandbox Mode
+                  </div>
+                  <h4 className="text-white text-sm font-semibold tracking-tight">Protect Your Progress</h4>
+                  <p className="text-zinc-400 text-xs leading-relaxed">
+                    Don't lose your completed routines and future history. Secure your temporary focus workspace and keep your statistics completely intact across devices.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSecureModalOpen(true)}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold uppercase tracking-wider rounded transition-all shrink-0 cursor-pointer shadow-[0_2px_8px_rgba(245,158,11,0.2)] hover:scale-[1.02]"
+                >
+                  Secure Progress
+                </button>
+              </motion.div>
+            )}
 
             {/* Responsive Launchpad Grid - Side-by-Side on desktop, stacked & ultra-compact on mobile */}
             <div className="max-w-5xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 items-start">
@@ -900,14 +1173,29 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
 
                 {/* Suggestion Chips */}
                 {frequentTasks.length > 0 && (
-                  <div className="pt-2 sm:pt-4 border-t border-[#2A2A2A] flex flex-col gap-1.5 sm:gap-2">
-                    <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest text-center">Past Flow States</span>
-                    <div className="flex flex-wrap gap-1.5 justify-center">
-                      {frequentTasks.slice(0, 3).map(task => (
+                  <div className="pt-2 sm:pt-4 border-t border-[#2A2A2A] flex flex-col gap-1.5 sm:gap-2 text-left">
+                    <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block text-center sm:text-left">
+                      {userSessions.length > 0 ? "Your Past Flow States" : "Quick Start Presets"}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {frequentTasks.slice(0, 4).map(task => (
                         <button
                           key={task}
-                          onClick={() => setTaskName(task)}
-                          className="px-3 py-1 rounded bg-[#1C1C1E] border border-[#2A2A2A] hover:bg-[#252529] hover:border-[#444444] text-[10px] text-zinc-400 hover:text-white transition-all cursor-pointer truncate max-w-[140px]"
+                          type="button"
+                          onClick={() => {
+                            setTaskName(task);
+                            // Pre-fill micro-step smart defaults based on selected preset
+                            if (task === "Draft weekly planner & goals") {
+                              setTinyStep("List my top 3 highest priority objectives for this week");
+                            } else if (task === "Outline project proposal") {
+                              setTinyStep("Draft the introductory paragraph and core value proposition");
+                            } else if (task === "Review & reply to critical emails") {
+                              setTinyStep("Clear the top 5 urgent items in my inbox");
+                            } else if (task === "Brainstorm creative content ideas") {
+                              setTinyStep("Scribble down 5 raw concepts without filtering");
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded bg-[#1C1C1E] border border-[#2A2A2A] hover:bg-[#252529] hover:border-[#444444] text-[11px] text-zinc-400 hover:text-white transition-all cursor-pointer truncate max-w-full"
                         >
                           {task}
                         </button>
@@ -924,7 +1212,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                   
                   {/* Mode Selector Segmented Track */}
                   <div className="space-y-1.5 text-left">
-                    <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider font-bold">Session Format</span>
+                    <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider font-bold">Focus Format</span>
                     <div className="flex bg-black border border-[#2A2A2A] rounded p-1 gap-1 w-full">
                       <button 
                         type="button"
@@ -935,7 +1223,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                             : "bg-transparent text-zinc-500 hover:text-white"
                         }`}
                       >
-                        Single Session
+                        Single Focus Block
                       </button>
                       <button 
                         type="button"
@@ -955,7 +1243,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                   <div className="space-y-3 pt-1 border-t border-[#2A2A2A]">
                     <div className="flex flex-row items-center justify-between gap-3 bg-black border border-[#2A2A2A] rounded p-3 transition-all hover:border-[#3A3A3A]">
                       <div className="space-y-0.5 text-left">
-                        <span className="text-[10px] sm:text-xs font-semibold font-mono text-zinc-300 tracking-wider uppercase font-bold">Session Length</span>
+                        <span className="text-[10px] sm:text-xs font-semibold font-mono text-zinc-300 tracking-wider uppercase font-bold">Focus Duration</span>
                         <p className="text-[9px] text-zinc-500 font-sans hidden sm:block">
                           Customize interval length.
                         </p>
@@ -1302,7 +1590,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                       id="direct-tiny-step-btn"
                       className="w-full h-11 bg-white hover:bg-zinc-200 text-black font-semibold rounded tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed text-xs sm:text-sm shadow-lg hover:shadow-xl active:scale-[0.99]"
                     >
-                      Configure Session
+                      Take a Deep Breath
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     </button>
                   </div>
@@ -1539,7 +1827,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                   className="flex-1 h-14 bg-white hover:bg-[#F0F0F0] text-black rounded font-medium tracking-wide transition-colors flex items-center justify-center gap-2 cursor-pointer text-xs sm:text-sm animate-pulse"
                 >
                   <Clock className="w-4 h-4 shrink-0" />
-                  Init Sequence ({formatSessionMinutes(sessionMinutes)})
+                  Begin Focus Block ({formatSessionMinutes(sessionMinutes)})
                 </button>
               </div>
             </div>
@@ -1548,16 +1836,43 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
 
         {/* FOCUS SESSION MODE */}
         {(focusState === "focusing" || focusState === "paused" || focusState === "interval_break") && (
-          <motion.div
-            key="focusing"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex flex-col items-center justify-center space-y-3 sm:space-y-6 md:space-y-9 py-1 sm:py-4 w-full"
-          >
+          isMinimized ? (
+            <motion.div
+              key="focusing-minimized-notice"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center space-y-4 py-16 w-full max-w-md mx-auto text-center"
+            >
+              <div className="w-16 h-16 rounded-full bg-zinc-950 border border-zinc-900 flex items-center justify-center text-zinc-500 animate-pulse">
+                <Minimize2 className="w-6 h-6 text-zinc-400" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-lg font-bold text-white tracking-tight uppercase">Micro Focus Active</h3>
+                <p className="text-zinc-500 text-xs font-mono leading-relaxed max-w-xs mx-auto">
+                  The dashboard is minimized to a floating micro-widget. Click Restore to expand.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMinimized(false)}
+                className="px-5 py-2 bg-white hover:bg-zinc-200 text-black text-xs font-semibold rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5 font-mono uppercase"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                Restore Dashboard
+              </button>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="focusing"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center space-y-3 sm:space-y-6 md:space-y-9 py-1 sm:py-4 w-full"
+            >
             {/* Spotlight layout Header */}
             <div className="text-center space-y-1 sm:space-y-2 max-w-[280px] sm:max-w-sm bg-[#121212]/80 backdrop-blur-md pt-3.5 sm:pt-10 pr-3 pb-2 sm:pb-3 pl-4 sm:pl-8 border border-[#2A2A2A]/80 rotate-[1.5deg] relative z-10 -mb-2 sm:-mb-4 shadow-[4px_4px_0px_rgba(0,0,0,0.4)]">
-              <span className="text-[8px] sm:text-[9px] font-mono text-[#888888] uppercase tracking-[0.25em] block">Target</span>
+              <span className="text-[8px] sm:text-[9px] font-mono text-[#888888] uppercase tracking-[0.25em] block">Current Focus Block</span>
               <h2 className="text-sm sm:text-2xl font-black text-white line-clamp-1 sm:line-clamp-2 uppercase tracking-tighter leading-[0.85]">{taskName}</h2>
               {sessionMode === "interval" && (
                 <div className="text-[9px] sm:text-[10px] font-mono text-[#666666]">
@@ -1836,6 +2151,15 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
 
                 <button
                   type="button"
+                  onClick={() => setIsMinimized(true)}
+                  className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-transparent border border-[#2A2A2A] hover:bg-[#1A1A1A] text-[#888888] hover:text-white rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-medium font-sans"
+                >
+                  <Minimize2 className="w-3.5 h-3.5 shrink-0" />
+                  Minimize
+                </button>
+
+                <button
+                  type="button"
                   onClick={handleCompleteSession}
                   id="mock-finish-session-btn"
                   className="flex-1 min-w-[72px] xs:min-w-[100px] sm:min-w-[110px] max-w-[130px] h-9 xs:h-11 bg-white hover:bg-[#F0F0F0] text-black font-medium rounded transition-colors cursor-pointer flex items-center justify-center gap-1 xs:gap-1.5 text-[10px] xs:text-xs font-sans animate-pulse"
@@ -1952,7 +2276,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
 
 
           </motion.div>
-        )}
+        ))}
 
         {/* STUCK RESCUE STATE */}
         {focusState === "stuck_rescue" && (
@@ -2195,7 +2519,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
           >
             <div className="space-y-2 block text-left bg-[#121212]/80 backdrop-blur-md pt-12 pr-4 pb-3 pl-8 border border-[#2A2A2A]/80 rotate-[-1.5deg] relative z-10 mb-4">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-black border border-[#2A2A2A]/80 text-[9px] text-white font-mono tracking-widest uppercase mb-4 shadow-[2px_2px_0px_#2A2A2A]">
-                SESSION REFLECTION
+                FOCUS BLOCK CELEBRATION
               </div>
               <h2 className="text-4xl font-black uppercase tracking-tighter text-white leading-[0.85] mt-2">
                 Nicely done. What progress occurred?
@@ -2207,7 +2531,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
 
             <div className="space-y-5 bg-black/80 backdrop-blur-md p-6 border border-[#2A2A2A]/80 rotate-[1deg] relative z-20">
               <div className="space-y-2">
-                <label className="text-[10px] font-mono text-[#888888] block tracking-wider uppercase">Session Notes (Optional)</label>
+                <label className="text-[10px] font-mono text-[#888888] block tracking-wider uppercase">Focus Accomplishments (Optional)</label>
                 <textarea
                   value={completedNotes}
                   onChange={(e) => setCompletedNotes(e.target.value)}
@@ -2239,7 +2563,7 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
                 {isSaving ? (
                   <>
                     <span className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin"></span>
-                    Saving Session...
+                    Preserving Progress...
                   </>
                 ) : (
                   <>
@@ -2268,6 +2592,55 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
               <p className="text-[#666666] text-xs sm:text-sm font-sans max-w-sm mx-auto leading-relaxed">
                 Your future self will thank you. The session data is securely logged.
               </p>
+            </div>
+
+            {/* Contrast & Momentum Report Card */}
+            <div className="max-w-md mx-auto bg-zinc-950 border border-zinc-900 rounded-xl p-5 text-left space-y-4">
+              <div className="flex items-center gap-2 border-b border-zinc-900 pb-2.5">
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-[10px] font-mono uppercase text-emerald-400 tracking-wider font-bold">Contrast & Momentum Report</span>
+              </div>
+              
+              <div className="space-y-3">
+                {/* Contrast Aspect */}
+                <div className="flex items-start gap-3">
+                  <div className="w-5 h-5 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                    <ArrowRight className="w-3 h-3 text-emerald-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Before vs After (Contrast Effect)</h4>
+                    <p className="text-zinc-300 text-xs mt-1 leading-relaxed">
+                      You started with <span className="text-zinc-400 font-semibold italic">0% progress</span> and task-avoidance friction. By slicing the project into a micro-step, you successfully locked in <span className="text-white font-bold">100% of your objective</span>.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Cognitive Time Saved Aspect */}
+                <div className="flex items-start gap-3">
+                  <div className="w-5 h-5 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                    <Clock className="w-3 h-3 text-blue-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Time Saved (Workspace Efficiency)</h4>
+                    <p className="text-zinc-300 text-xs mt-1 leading-relaxed">
+                      Slicing <span className="text-zinc-400">"{taskName || "your task"}"</span> into a micro-step bypasses limbic procrastination, saving you approximately <span className="text-emerald-400 font-bold">15 to 20 minutes</span> of manual focus struggles.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Progress Momentum Aspect */}
+                <div className="flex items-start gap-3">
+                  <div className="w-5 h-5 rounded-full bg-purple-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                    <Flame className="w-3 h-3 text-purple-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Weekly Flow Momentum</h4>
+                    <p className="text-zinc-300 text-xs mt-1 leading-relaxed">
+                      This session contributes to your weekly routine. Maintain this progress momentum to effortlessly complete your 150-minute allocation!
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Brain Dump Review Section */}
@@ -2370,6 +2743,147 @@ export default function FocusTab({ user, profile, lastSession, userSessions, onS
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Minimized Float Timer Window */}
+      <AnimatePresence>
+        {isMinimized && ["focusing", "paused", "interval_break", "guilt_free_break"].includes(focusState) && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            transition={{ duration: 0.2 }}
+            style={{
+              position: "fixed",
+              left: `${minimizedPosition.x}px`,
+              top: `${minimizedPosition.y}px`,
+              width: `${minimizedSize.width}px`,
+              height: `${minimizedSize.height}px`,
+              minWidth: "250px",
+              minHeight: "185px",
+            }}
+            className="fixed z-[9999] bg-[#0A0A0B] border-2 border-zinc-850 text-white shadow-[0_15px_50px_rgba(0,0,0,0.85)] rounded-lg overflow-hidden flex flex-col select-none"
+          >
+            {/* Header / Title Bar - acts as DRAG HANDLE */}
+            <div
+              onMouseDown={handleDragMouseDown}
+              onTouchStart={handleDragMouseDown}
+              className="px-3 py-1.5 bg-[#121214] border-b border-zinc-900 flex items-center justify-between cursor-move shrink-0 text-zinc-400 active:cursor-grabbing hover:bg-[#151518] transition-colors"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <div className={`w-1.5 h-1.5 rounded-full ${focusState === "paused" ? "bg-amber-500 animate-pulse" : focusState === "interval_break" || focusState === "guilt_free_break" ? "bg-emerald-400" : "bg-white animate-pulse"}`} />
+                <span className="text-[10px] font-mono uppercase tracking-wider truncate max-w-[120px]">
+                  {taskName || "Focus Session"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsMinimized(false)}
+                  title="Restore main window"
+                  className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800/60 rounded cursor-pointer transition-colors"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            {/* Content Body */}
+            <div className="flex-1 p-2.5 flex flex-col justify-between min-h-0 bg-[#070708]">
+              {/* Timer Block */}
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-900/40 pb-2 shrink-0">
+                <div className="flex flex-col text-left">
+                  <span className="text-[20px] font-mono leading-none tracking-tight font-black text-white">
+                    {formatTime(focusState === "guilt_free_break" ? guiltFreeRemaining : timeRemaining)}
+                  </span>
+                  <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest mt-0.5">
+                    {focusState === "interval_break" ? "INTERVAL BREAK" : focusState === "guilt_free_break" ? "GUILT-FREE BREAK" : focusState === "focusing" ? "DEEP FOCUS" : "FLOW PAUSED"}
+                  </span>
+                </div>
+
+                {/* Micro Control Actions */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handlePauseToggle}
+                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-white rounded cursor-pointer transition-colors flex items-center justify-center"
+                    title={focusState === "paused" ? "Resume" : "Pause"}
+                  >
+                    {focusState === "paused" ? <Play className="w-3.5 h-3.5 text-emerald-400" /> : <Pause className="w-3.5 h-3.5 text-zinc-350" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCompleteSession}
+                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-white rounded cursor-pointer transition-colors flex items-center justify-center"
+                    title="Conclude block"
+                  >
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Responsive Quick Note Creator (The "Brain Dump") */}
+              <div className="flex-1 flex flex-col justify-end mt-2 min-h-0 overflow-hidden">
+                <div className="flex gap-1.5 items-center bg-[#111113] border border-zinc-900/50 rounded px-1.5 py-1">
+                  <input
+                    type="text"
+                    value={minimizedNoteText}
+                    onChange={(e) => setMinimizedNoteText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && minimizedNoteText.trim()) {
+                        setBrainDumps(prev => [...prev, minimizedNoteText.trim()]);
+                        setMinimizedNoteText("");
+                        playSuccessChime();
+                      }
+                    }}
+                    placeholder="Type distraction or note..."
+                    className="flex-1 bg-transparent text-[11px] outline-none text-zinc-200 placeholder-zinc-650 font-sans"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (minimizedNoteText.trim()) {
+                        setBrainDumps(prev => [...prev, minimizedNoteText.trim()]);
+                        setMinimizedNoteText("");
+                        playSuccessChime();
+                      }
+                    }}
+                    className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-[9px] uppercase font-mono tracking-wider rounded text-zinc-300 cursor-pointer shrink-0 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+
+                {/* Subtitle indicators */}
+                <div className="flex justify-between items-center text-[8px] font-mono text-zinc-600 mt-1.5 leading-none shrink-0">
+                  <span className="truncate max-w-[140px]">
+                    Step: {tinyStep || "Active Focus"}
+                  </span>
+                  <span>
+                    {brainDumps.length} notes captured
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Drag Handle in corner for Resize */}
+            <div
+              onMouseDown={handleResizeMouseDown}
+              onTouchStart={handleResizeMouseDown}
+              style={{ cursor: "se-resize" }}
+              className="absolute bottom-0 right-0 w-3.5 h-3.5 flex items-end justify-end p-0.5 group active:cursor-se-grabbing z-50 select-none"
+            >
+              <svg className="w-2 h-2 text-zinc-700 group-hover:text-zinc-400 transition-colors" viewBox="0 0 6 6" fill="currentColor">
+                <path d="M6 6H0V4.5H4.5V0H6V6Z" />
+              </svg>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <SecureProgressModal 
+        isOpen={isSecureModalOpen} 
+        onClose={() => setIsSecureModalOpen(false)} 
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import React from "react";
 import { UserProfile, FocusSession, Project } from "../types";
+import SecureProgressModal from "./SecureProgressModal";
 import { 
   User, 
   Sparkles, 
@@ -28,6 +29,7 @@ interface SettingsTabProps {
 }
 
 export default function SettingsTab({ user, profile, sessions, projects, onUpdateProfile, onSignOut, onDeleteHistory, onFactoryReset }: SettingsTabProps) {
+  const [isSecureModalOpen, setIsSecureModalOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [confirmMode, setConfirmMode] = React.useState<'history' | 'factory' | null>(null);
 
@@ -158,7 +160,7 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
       </div>
 
       {/* User info Profile element */}
-      <div className="p-4 rounded bg-bg-panel border border-border-app flex justify-between items-center transition-colors duration-300 shadow-[0_4px_20px_var(--shadow-intensity)]">
+      <div className="p-4 rounded bg-bg-panel border border-border-app flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-colors duration-300 shadow-[0_4px_20px_var(--shadow-intensity)]">
         <div className="flex items-center gap-3.5 text-left">
           {user && user.photoURL ? (
             <img src={user.photoURL} alt={profile.displayName || "User"} referrerPolicy="no-referrer" className="w-11 h-11 rounded border border-border-app" />
@@ -168,23 +170,34 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
             </div>
           )}
           <div className="text-left">
-            <h3 className="text-xs sm:text-sm font-medium text-text-primary leading-none transition-colors duration-300">{user ? user.displayName : "Sandbox Visitor"}</h3>
-            <p className="text-[10px] font-mono text-text-muted mt-1 transition-colors duration-300">{user ? user.email : "guest@focuson.io"}</p>
+            <h3 className="text-xs sm:text-sm font-medium text-text-primary leading-none transition-colors duration-300">{user && user.uid !== "local-user" ? user.displayName : "Sandbox Visitor"}</h3>
+            <p className="text-[10px] font-mono text-text-muted mt-1 transition-colors duration-300">{user && user.uid !== "local-user" ? user.email : "guest@focuson.io"}</p>
             <span className="inline-block mt-2 px-2 py-0.5 rounded bg-bg-btn border border-border-app text-[8px] font-mono text-text-secondary uppercase tracking-wider transition-colors duration-300">
-              {user ? "Cloud Sync active" : "Guest Mode only"}
+              {user && user.uid !== "local-user" ? "Cloud Sync active" : "Guest Mode: Temporary Session"}
             </span>
           </div>
         </div>
 
-        <button
-          onClick={handleLogOutClick}
-          id="logout-btn"
-          className="px-3 py-2 bg-bg-btn hover:bg-bg-btn-hover border border-border-app text-text-secondary hover:text-text-primary rounded transition-all cursor-pointer text-[11px] font-medium flex items-center gap-1.5"
-          title="Sign out of current account"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          <span>Exit Workspace</span>
-        </button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          {(!user || user.uid === "local-user") && (
+            <button
+              onClick={() => setIsSecureModalOpen(true)}
+              className="flex-1 sm:flex-initial px-3 py-2 bg-amber-500 hover:bg-amber-600 border border-amber-600/30 text-black rounded transition-all cursor-pointer text-[11px] font-bold flex items-center justify-center gap-1.5 shadow-[0_2px_8px_rgba(245,158,11,0.2)]"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Secure Progress</span>
+            </button>
+          )}
+          <button
+            onClick={handleLogOutClick}
+            id="logout-btn"
+            className="flex-1 sm:flex-initial px-3 py-2 bg-bg-btn hover:bg-bg-btn-hover border border-border-app text-text-secondary hover:text-text-primary rounded transition-all cursor-pointer text-[11px] font-medium flex items-center justify-center gap-1.5"
+            title={!user || user.uid === "local-user" ? "Discard progress and reset workspace" : "Sign out of current account"}
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>{!user || user.uid === "local-user" ? "Discard Progress" : "Exit Workspace"}</span>
+          </button>
+        </div>
       </div>
 
       {/* Control cards container */}
@@ -453,6 +466,10 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
         </div>
       </div>
 
+      <SecureProgressModal 
+        isOpen={isSecureModalOpen} 
+        onClose={() => setIsSecureModalOpen(false)} 
+      />
     </div>
   );
 }

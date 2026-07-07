@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { auth } from "./lib/firebase";
-import { getOrCreateUserProfile, updateUserProfile, fetchUserSessions, saveFocusSession, deleteAllUserSessions, deleteUserSession, DEFAULT_PROJECTS } from "./lib/db";
+import { getOrCreateUserProfile, updateUserProfile, fetchUserSessions, saveFocusSession, deleteAllUserSessions, deleteUserSession, DEFAULT_PROJECTS, migrateLocalGuestData } from "./lib/db";
 import { UserProfile, FocusSession, Project } from "./types";
 import AuthScreen from "./components/AuthScreen";
 import FocusTab from "./components/FocusTab";
@@ -70,7 +70,7 @@ export default function App() {
     const nextLimit = sessionsLimit + 25;
     setSessionsLimit(nextLimit);
     try {
-      const sessions = await fetchUserSessions("local-user", nextLimit);
+      const sessions = await fetchUserSessions(currentUser?.uid || "local-user", nextLimit);
       setUserSessions(sessions);
     } catch (err) {
       console.error("Error loading more sessions:", err);
@@ -176,16 +176,24 @@ export default function App() {
       if (firebaseUser) {
         const uid = firebaseUser.uid;
         
+        // 0. Check and migrate local guest data if it exists in local storage
+        if (localStorage.getItem("focuson_profile") || localStorage.getItem("focuson_sessions")) {
+          try {
+            await migrateLocalGuestData(uid);
+          } catch (err) {
+            console.error("Failed to migrate guest data on auth state change:", err);
+          }
+        }
+        
         // 1. Instantly load from local storage cache so user doesn't wait for network roundtrips
-        const cachedProfileStr = localStorage.getItem("focuson_profile_" + uid) || localStorage.getItem("focuson_profile");
-        const cachedSessionsStr = localStorage.getItem("focuson_sessions_" + uid) || localStorage.getItem("focuson_sessions");
+        const cachedProfileStr = localStorage.getItem("focuson_profile_" + uid);
+        const cachedSessionsStr = localStorage.getItem("focuson_sessions_" + uid);
         
         if (cachedProfileStr) {
           try {
             const parsedProfile = JSON.parse(cachedProfileStr);
-            if (parsedProfile.uid === uid || parsedProfile.uid === "local-user") {
-              const profileWithUid = { ...parsedProfile, uid };
-              setUserProfile(profileWithUid);
+            if (parsedProfile.uid === uid) {
+              setUserProfile(parsedProfile);
               setCurrentUser(firebaseUser);
               
               if (cachedSessionsStr) {
@@ -282,7 +290,7 @@ export default function App() {
       displayName: nameToUse,
       photoURL: null,
       createdAt: new Date().toISOString(),
-      adhdMode: false,
+      adhdMode: true,
       weeklyGoalMinutes: 150,
       projects: DEFAULT_PROJECTS,
       completedOnboarding: false

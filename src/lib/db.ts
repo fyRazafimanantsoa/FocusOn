@@ -74,9 +74,8 @@ export async function getOrCreateUserProfile(
           completedOnboarding: data.completedOnboarding ?? true,
           projects: (!data.projects || data.projects.length === 0) ? DEFAULT_PROJECTS : data.projects
         };
-        // Cache locally for guest/local fallback
+        // Cache locally for this specific user only
         localStorage.setItem("focuson_profile_" + uid, JSON.stringify(updatedProfile));
-        localStorage.setItem("focuson_profile", JSON.stringify(updatedProfile));
         return updatedProfile;
       } else if (response.status === 404) {
         const freshProfile: UserProfile = {
@@ -85,7 +84,7 @@ export async function getOrCreateUserProfile(
           displayName: displayName || "FocusOn Pilot",
           photoURL,
           createdAt: new Date().toISOString(),
-          adhdMode: false,
+          adhdMode: true,
           weeklyGoalMinutes: 150,
           projects: DEFAULT_PROJECTS,
           completedOnboarding: false
@@ -94,9 +93,8 @@ export async function getOrCreateUserProfile(
           method: "POST",
           body: JSON.stringify(freshProfile)
         });
-        // Cache locally
+        // Cache locally for this specific user only
         localStorage.setItem("focuson_profile_" + uid, JSON.stringify(freshProfile));
-        localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
         return freshProfile;
       }
     } catch (err) {
@@ -106,7 +104,7 @@ export async function getOrCreateUserProfile(
 
   // Fallback to Local Storage for guest / local mode caching
   const storedKey = isLocal ? "focuson_profile" : "focuson_profile_" + uid;
-  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_profile");
+  const stored = localStorage.getItem(storedKey);
   if (stored) {
     const data = JSON.parse(stored) as UserProfile;
     const dataWithUid: UserProfile = {
@@ -116,7 +114,6 @@ export async function getOrCreateUserProfile(
       projects: (!data.projects || data.projects.length === 0) ? DEFAULT_PROJECTS : data.projects
     };
     localStorage.setItem(storedKey, JSON.stringify(dataWithUid));
-    localStorage.setItem("focuson_profile", JSON.stringify(dataWithUid));
     return dataWithUid;
   } else {
     const freshProfile: UserProfile = {
@@ -125,13 +122,12 @@ export async function getOrCreateUserProfile(
       displayName: displayName || "FocusOn Pilot",
       photoURL: isLocal ? null : photoURL,
       createdAt: new Date().toISOString(),
-      adhdMode: false,
+      adhdMode: true,
       weeklyGoalMinutes: 150,
       projects: DEFAULT_PROJECTS,
       completedOnboarding: false
     };
     localStorage.setItem(storedKey, JSON.stringify(freshProfile));
-    localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
     return freshProfile;
   }
 }
@@ -152,12 +148,11 @@ export async function updateUserProfile(uid: string, updates: Partial<UserProfil
 
   // Always keep local storage updated in case of guest/local fallback
   const storedKey = isLocal ? "focuson_profile" : "focuson_profile_" + uid;
-  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_profile");
+  const stored = localStorage.getItem(storedKey);
   if (stored) {
     const current = JSON.parse(stored) as UserProfile;
     const updated = { ...current, ...updates, uid };
     localStorage.setItem(storedKey, JSON.stringify(updated));
-    localStorage.setItem("focuson_profile", JSON.stringify(updated));
   } else {
     const freshProfile: UserProfile = {
       uid,
@@ -171,7 +166,6 @@ export async function updateUserProfile(uid: string, updates: Partial<UserProfil
       ...updates
     };
     localStorage.setItem(storedKey, JSON.stringify(freshProfile));
-    localStorage.setItem("focuson_profile", JSON.stringify(freshProfile));
   }
 }
 
@@ -184,9 +178,8 @@ export async function fetchUserSessions(uid: string, limitCount = 50): Promise<F
       const response = await fetchWithAuth(`/api/user-sessions?limit=${limitCount}`);
       if (response.status === 200) {
         const sessions = await response.json() as FocusSession[];
-        // Synchronize with local storage for guest/local caching
+        // Cache locally for this specific user only
         localStorage.setItem("focuson_sessions_" + uid, JSON.stringify(sessions));
-        localStorage.setItem("focuson_sessions", JSON.stringify(sessions));
         return sessions;
       }
     } catch (err) {
@@ -196,50 +189,63 @@ export async function fetchUserSessions(uid: string, limitCount = 50): Promise<F
 
   // Fallback to local storage
   const storedKey = isLocal ? "focuson_sessions" : "focuson_sessions_" + uid;
-  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_sessions");
+  const stored = localStorage.getItem(storedKey);
   if (stored) {
     const list = JSON.parse(stored) as FocusSession[];
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limitCount);
   } else {
-    // Initial clean dummy entries for nice UX presentation
-    const seedSessions: FocusSession[] = [
-      {
-        id: "1",
-        userId: uid,
-        taskName: "Database design of main API",
-        tinyStep: "Write out 5 schemas in text file",
-        originalDurationMinutes: 25,
-        actualDurationSeconds: 1500,
-        completed: true,
-        status: "completed",
-        createdAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
-        dateStr: new Date(Date.now() - 36 * 3600 * 1000).toISOString().split("T")[0],
-        reflectionNotes: "Completed schema definitions. Discovered that keeping them modular was more scalable.",
-        nextStepSuggested: "Test primary signup routing controllers",
-        stuckCount: 1,
-        distractionCheckInCount: 1
-      },
-      {
-        id: "2",
-        userId: uid,
-        taskName: "UI Landing page sketch",
-        tinyStep: "Draw outline on paper or wireframe",
-        originalDurationMinutes: 20,
-        actualDurationSeconds: 1200,
-        completed: true,
-        status: "completed",
-        createdAt: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
-        dateStr: new Date(Date.now() - 12 * 3600 * 1000).toISOString().split("T")[0],
-        reflectionNotes: "Drew 3 layout variations. Picked version 2 for its serene aesthetic space.",
-        nextStepSuggested: "Code the header layout",
-        stuckCount: 0,
-        distractionCheckInCount: 0
-      }
-    ];
-    localStorage.setItem(storedKey, JSON.stringify(seedSessions));
-    localStorage.setItem("focuson_sessions", JSON.stringify(seedSessions));
-    return seedSessions.slice(0, limitCount);
+    // Return empty list for an actual clean history for a new user
+    return [];
   }
+}
+
+export async function migrateLocalGuestData(newUid: string): Promise<void> {
+  // 1. Get local guest profile
+  const guestProfileStr = localStorage.getItem("focuson_profile");
+  if (guestProfileStr) {
+    try {
+      const guestProfile = JSON.parse(guestProfileStr) as UserProfile;
+      // Copy to new user profile cache, replacing uid
+      const updatedProfile = { ...guestProfile, uid: newUid, completedOnboarding: true };
+      localStorage.setItem("focuson_profile_" + newUid, JSON.stringify(updatedProfile));
+      
+      // Save profile to Firestore
+      await fetchWithAuth("/api/user-profile", {
+        method: "POST",
+        body: JSON.stringify(updatedProfile)
+      });
+    } catch (e) {
+      console.error("Failed to migrate guest profile:", e);
+    }
+  }
+
+  // 2. Get local guest sessions
+  const guestSessionsStr = localStorage.getItem("focuson_sessions");
+  if (guestSessionsStr) {
+    try {
+      const guestSessions = JSON.parse(guestSessionsStr) as FocusSession[];
+      // Map sessions to new uid
+      const updatedSessions = guestSessions.map(s => ({ ...s, userId: newUid }));
+      localStorage.setItem("focuson_sessions_" + newUid, JSON.stringify(updatedSessions));
+
+      // Post sessions to the Express backend
+      for (const sess of updatedSessions) {
+        await fetchWithAuth("/api/user-sessions", {
+          method: "POST",
+          body: JSON.stringify({
+            id: sess.id,
+            session: sess
+          })
+        });
+      }
+    } catch (e) {
+      console.error("Failed to migrate guest sessions:", e);
+    }
+  }
+
+  // Clear guest storage so migration only runs once
+  localStorage.removeItem("focuson_profile");
+  localStorage.removeItem("focuson_sessions");
 }
 
 export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: string): Promise<string> {
@@ -248,7 +254,7 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
 
   // 1. Always save/update locally first to guarantee offline persistence and instant UI response
   const storedKey = isLocal ? "focuson_sessions" : "focuson_sessions_" + session.userId;
-  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_sessions");
+  const stored = localStorage.getItem(storedKey);
   let list = stored ? (JSON.parse(stored) as FocusSession[]) : [];
   
   const existingIdx = list.findIndex(s => s.id === generatedId);
@@ -259,7 +265,6 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
     list.push(sessionWithId);
   }
   localStorage.setItem(storedKey, JSON.stringify(list));
-  localStorage.setItem("focuson_sessions", JSON.stringify(list));
 
   // 2. Sync to Firestore in the background if logged in
   if (!isLocal) {
@@ -288,7 +293,7 @@ export async function deleteUserSession(sessionId: string): Promise<void> {
     }
   }
 
-  const storedKeys = user ? ["focuson_sessions_" + user.uid, "focuson_sessions"] : ["focuson_sessions"];
+  const storedKeys = user ? ["focuson_sessions_" + user.uid] : ["focuson_sessions"];
   storedKeys.forEach(key => {
     const stored = localStorage.getItem(key);
     if (stored) {
@@ -313,7 +318,6 @@ export async function deleteAllUserSessions(uid: string): Promise<void> {
   }
 
   localStorage.removeItem("focuson_sessions_" + uid);
-  localStorage.removeItem("focuson_sessions");
 }
 
 export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<string> {
@@ -332,12 +336,11 @@ export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<s
   }
 
   const storedKey = isLocal ? "focuson_distractions" : "focuson_distractions_" + log.userId;
-  const stored = localStorage.getItem(storedKey) || localStorage.getItem("focuson_distractions");
+  const stored = localStorage.getItem(storedKey);
   let list = stored ? (JSON.parse(stored) as DistractionLog[]) : [];
   const newLog = { id: generatedId, ...log } as DistractionLog;
   list.push(newLog);
   localStorage.setItem(storedKey, JSON.stringify(list));
-  localStorage.setItem("focuson_distractions", JSON.stringify(list));
   return generatedId;
 }
 

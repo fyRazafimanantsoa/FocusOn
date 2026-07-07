@@ -93,11 +93,11 @@ export default function OnboardingTutorial({ onComplete, onSkip }: OnboardingTut
         className="w-full max-w-lg bg-[#121212] border border-[#222222] shadow-2xl p-6 sm:p-8 flex flex-col relative overflow-hidden"
         id="onboarding-tutorial-modal"
       >
-        {/* Step progress bar */}
+        {/* Step progress bar - starting at 35% */}
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-[#1A1A1A]">
           <div 
             className="h-full bg-white transition-all duration-300"
-            style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
+            style={{ width: `${Math.round(35 + (currentStep / (steps.length - 1)) * 65)}%` }}
           />
         </div>
 
@@ -116,6 +116,34 @@ export default function OnboardingTutorial({ onComplete, onSkip }: OnboardingTut
             >
               Skip Tour
             </button>
+          </div>
+
+          {/* Goal Gradient Progress Checklist */}
+          <div className="mt-4 p-4 bg-zinc-950/80 border border-zinc-900 rounded-xl space-y-2.5 text-left">
+            <div className="flex justify-between items-center text-[10px] font-mono tracking-wider text-zinc-400">
+              <span className="font-bold uppercase tracking-widest">Setup Milestones</span>
+              <span className="text-white font-mono bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+                {Math.round(35 + (currentStep / (steps.length - 1)) * 65)}% Done
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[11px] font-sans">
+              <div className="flex items-center gap-2 text-emerald-400 font-medium">
+                <Check className="w-3.5 h-3.5 shrink-0 bg-emerald-950 text-emerald-400 p-0.5 rounded-full border border-emerald-800" />
+                <span>Initialize Workspace (✓)</span>
+              </div>
+              <div className="flex items-center gap-2 text-emerald-400 font-medium">
+                <Check className="w-3.5 h-3.5 shrink-0 bg-emerald-950 text-emerald-400 p-0.5 rounded-full border border-emerald-800" />
+                <span>Load Supportive Settings (✓)</span>
+              </div>
+              <div className="flex items-center gap-2 text-white font-semibold">
+                <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin shrink-0" />
+                <span>Tour Features (Step {currentStep + 1}/5)</span>
+              </div>
+              <div className="flex items-center gap-2 text-zinc-650">
+                <div className="w-3.5 h-3.5 rounded-full border border-zinc-800 shrink-0" />
+                <span>Launch First Focus Block</span>
+              </div>
+            </div>
           </div>
 
           {/* Core Body with sliding animation */}

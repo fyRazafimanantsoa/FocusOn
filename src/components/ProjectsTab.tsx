@@ -211,7 +211,7 @@ export default function ProjectsTab({
                   type="text"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
-                  placeholder="e.g. Thesis Draft, Code Sprint"
+                  placeholder="e.g. Thesis Draft, Creative Writing"
                   className="w-full h-10 px-3 bg-[#121212] border border-[#2A2A2A] text-white text-xs rounded outline-none focus:border-white transition-colors font-mono"
                   maxLength={25}
                   required
