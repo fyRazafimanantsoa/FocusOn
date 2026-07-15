@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Compass, Sparkles, CircleDot, Mail, Lock, LogIn, UserPlus, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { logInWithEmail, registerWithEmail, logInWithGoogle, updateDisplayName } from "../lib/firebase";
+import { logInWithEmail, registerWithEmail, logInWithGoogle, updateDisplayName, sendPasswordReset } from "../lib/firebase";
 
 interface AuthScreenProps {
   onGuestAccess: (customName?: string) => void;
@@ -34,6 +34,11 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
   const [username, setUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Custom states for friendly UX notifications
+  const [emailAlreadyUsed, setEmailAlreadyUsed] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
+  const [isResetLoading, setIsResetLoading] = useState(false);
+
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
@@ -47,6 +52,7 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
 
     setIsLoading(true);
     setError(null);
+    setEmailAlreadyUsed(false);
 
     try {
       if (isSignUp) {
@@ -57,6 +63,12 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
       }
     } catch (err: any) {
       console.error("Email authentication error:", err);
+      if (err.code === "auth/email-already-in-use") {
+        setEmailAlreadyUsed(true);
+        setIsLoading(false);
+        return; // Return early without triggering the big error panel
+      }
+
       let errMsg = "Authentication failed. Please try again.";
       if (err.code === "auth/unauthorized-domain" || err.message?.includes("unauthorized-domain")) {
         errMsg = `Domain unauthorized! Go to your Firebase Console under "Authentication" > "Settings" > "Authorized Domains" and add: ${window.location.hostname}`;
@@ -64,8 +76,6 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
         errMsg = "Invalid credentials. Please verify your Firebase project setup, API Key, and email/password configuration.";
       } else if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-login-credentials") {
         errMsg = "Incorrect email or password.";
-      } else if (err.code === "auth/email-already-in-use") {
-        errMsg = "This email is already in use.";
       } else if (err.code === "auth/weak-password") {
         errMsg = "Password should be at least 6 characters.";
       } else if (err.code === "auth/invalid-email") {
@@ -75,6 +85,33 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
       }
       setError(errMsg);
       setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError("Please enter your email address first to reset your password.");
+      return;
+    }
+    setIsResetLoading(true);
+    setError(null);
+    setResetEmailSent(false);
+    try {
+      await sendPasswordReset(email);
+      setResetEmailSent(true);
+    } catch (err: any) {
+      console.error("Password reset error:", err);
+      let errMsg = "Failed to send reset email. Please try again.";
+      if (err.code === "auth/user-not-found") {
+        errMsg = "No account found with this email.";
+      } else if (err.code === "auth/invalid-email") {
+        errMsg = "Please enter a valid email address.";
+      } else if (err.message) {
+        errMsg = err.message;
+      }
+      setError(errMsg);
+    } finally {
+      setIsResetLoading(false);
     }
   };
 
@@ -180,6 +217,40 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
           )}
         </AnimatePresence>
 
+        {/* Prominent Segmented Auth Tab Switcher */}
+        <motion.div variants={itemVariants} className="mt-6 p-1 bg-zinc-950/80 border border-zinc-900 rounded-xl flex gap-1 relative z-10 shadow-inner">
+          <button
+            type="button"
+            onClick={() => {
+              setIsSignUp(false);
+              setError(null);
+            }}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 outline-none ${
+              !isSignUp 
+                ? "bg-zinc-800 text-white shadow-[0_2px_8px_rgba(0,0,0,0.4)] border border-zinc-700/30" 
+                : "text-zinc-500 hover:text-zinc-300 border border-transparent"
+            }`}
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSignUp(true);
+              setError(null);
+            }}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 outline-none ${
+              isSignUp 
+                ? "bg-zinc-800 text-white shadow-[0_2px_8px_rgba(0,0,0,0.4)] border border-zinc-700/30" 
+                : "text-zinc-500 hover:text-zinc-300 border border-transparent"
+            }`}
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            Sign Up
+          </button>
+        </motion.div>
+
         {/* Auth Input Form Area */}
         <motion.form onSubmit={handleEmailAuth} variants={itemVariants} className="mt-6 space-y-3.5 text-left">
           {isSignUp && (
@@ -208,17 +279,59 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailAlreadyUsed(false);
+                  setResetEmailSent(false);
+                  if (error && (error.includes("email") || error.includes("Reset") || error.includes("account"))) {
+                    setError(null);
+                  }
+                }}
                 placeholder="name@domain.com"
                 className="w-full h-11 pl-10 bg-zinc-950/60 hover:bg-zinc-950/80 focus:bg-zinc-950 border border-zinc-850 focus:border-zinc-700 text-zinc-100 text-xs rounded-xl px-4 transition-all outline-none focus:ring-1 focus:ring-zinc-800/50"
               />
             </div>
+
+            {emailAlreadyUsed && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[11px] font-mono leading-normal mt-1.5 flex items-start gap-1.5"
+              >
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <div>
+                  <span>This email is already registered. </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignUp(false);
+                      setEmailAlreadyUsed(false);
+                    }}
+                    className="underline hover:text-white font-bold ml-1 cursor-pointer"
+                  >
+                    Switch to Sign In
+                  </button>
+                </div>
+              </motion.div>
+            )}
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[9px] font-mono text-zinc-500 tracking-wider uppercase block ml-1">
-              Password
-            </label>
+            <div className="flex justify-between items-center ml-1">
+              <label className="text-[9px] font-mono text-zinc-500 tracking-wider uppercase block">
+                Password
+              </label>
+              {!isSignUp && (
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={isResetLoading}
+                  className="text-[9px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors uppercase tracking-wider outline-none cursor-pointer disabled:opacity-50"
+                >
+                  {isResetLoading ? "Sending Reset..." : "Forgot Password?"}
+                </button>
+              )}
+            </div>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-600">
                 <Lock className="w-4 h-4" />
@@ -232,6 +345,22 @@ export default function AuthScreen({ onGuestAccess, isLoading, setIsLoading }: A
               />
             </div>
           </div>
+
+          <AnimatePresence>
+            {resetEmailSent && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-900/40 text-emerald-400 text-xs flex items-start gap-2 text-left mt-2"
+              >
+                <div className="flex flex-col gap-1">
+                  <span className="font-bold">📩 Password reset email sent!</span>
+                  <span className="text-zinc-450 text-[11px]">Check your inbox for instructions to reset your password.</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <button
             type="submit"

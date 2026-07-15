@@ -251,14 +251,29 @@ export async function migrateLocalGuestData(newUid: string): Promise<void> {
 export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: string): Promise<string> {
   const isLocal = session.userId === "local-user";
   const generatedId = id || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const sessionWithId = { id: generatedId, ...session } as FocusSession;
 
-  // 1. Always save/update locally first to guarantee offline persistence and instant UI response
+  // 1. Cloud Save First if authenticated
+  if (!isLocal) {
+    try {
+      const response = await fetchWithAuth("/api/user-sessions", {
+        method: "POST",
+        body: JSON.stringify({ id: generatedId, session })
+      });
+      if (!response.ok) {
+        throw new Error(`Cloud save responded with ${response.status}: ${response.statusText}`);
+      }
+    } catch (err) {
+      console.warn("Error saving focus session to cloud, falling back to local-only cache:", err);
+    }
+  }
+
+  // 2. Always maintain local cache as backup
   const storedKey = isLocal ? "focuson_sessions" : "focuson_sessions_" + session.userId;
   const stored = localStorage.getItem(storedKey);
   let list = stored ? (JSON.parse(stored) as FocusSession[]) : [];
   
   const existingIdx = list.findIndex(s => s.id === generatedId);
-  const sessionWithId = { id: generatedId, ...session } as FocusSession;
   if (existingIdx > -1) {
     list[existingIdx] = { ...list[existingIdx], ...sessionWithId };
   } else {
@@ -266,33 +281,27 @@ export async function saveFocusSession(session: Omit<FocusSession, "id">, id?: s
   }
   localStorage.setItem(storedKey, JSON.stringify(list));
 
-  // 2. Sync to Firestore in the background if logged in
-  if (!isLocal) {
-    try {
-      await fetchWithAuth("/api/user-sessions", {
-        method: "POST",
-        body: JSON.stringify({ id: generatedId, session })
-      });
-    } catch (err) {
-      console.error("Error saving focus session via API:", err);
-    }
-  }
-
   return generatedId;
 }
 
 export async function deleteUserSession(sessionId: string): Promise<void> {
   const user = auth.currentUser;
+  
+  // 1. Cloud Delete First if authenticated
   if (user) {
     try {
-      await fetchWithAuth(`/api/user-sessions/${sessionId}`, {
+      const response = await fetchWithAuth(`/api/user-sessions/${sessionId}`, {
         method: "DELETE"
       });
+      if (!response.ok) {
+        throw new Error(`Cloud delete responded with ${response.status}: ${response.statusText}`);
+      }
     } catch (err) {
-      console.error("Error deleting session via API:", err);
+      console.error("Error deleting session via API, falling back to local-only deletion:", err);
     }
   }
 
+  // 2. Update local cache backup
   const storedKeys = user ? ["focuson_sessions_" + user.uid] : ["focuson_sessions"];
   storedKeys.forEach(key => {
     const stored = localStorage.getItem(key);
@@ -307,38 +316,48 @@ export async function deleteUserSession(sessionId: string): Promise<void> {
 export async function deleteAllUserSessions(uid: string): Promise<void> {
   const isLocal = uid === "local-user";
 
+  // 1. Cloud Batch Delete First if authenticated
   if (!isLocal) {
     try {
-      await fetchWithAuth("/api/user-sessions", {
+      const response = await fetchWithAuth("/api/user-sessions", {
         method: "DELETE"
       });
+      if (!response.ok) {
+        throw new Error(`Cloud batch delete responded with ${response.status}: ${response.statusText}`);
+      }
     } catch (err) {
       console.error("Error batch deleting sessions via API:", err);
     }
   }
 
+  // 2. Remove local cache
   localStorage.removeItem("focuson_sessions_" + uid);
 }
 
 export async function logDistraction(log: Omit<DistractionLog, "id">): Promise<string> {
   const isLocal = log.userId === "local-user";
   const generatedId = `dist_${Date.now()}`;
+  const newLog = { id: generatedId, ...log } as DistractionLog;
 
+  // 1. Cloud Log First if authenticated
   if (!isLocal) {
     try {
-      await fetchWithAuth("/api/distraction-log", {
+      const response = await fetchWithAuth("/api/distraction-log", {
         method: "POST",
         body: JSON.stringify({ id: generatedId, log })
       });
+      if (!response.ok) {
+        throw new Error(`Cloud log distraction responded with ${response.status}: ${response.statusText}`);
+      }
     } catch (err) {
       console.error("Error logging distraction via API:", err);
     }
   }
 
+  // 2. Save in local cache backup
   const storedKey = isLocal ? "focuson_distractions" : "focuson_distractions_" + log.userId;
   const stored = localStorage.getItem(storedKey);
   let list = stored ? (JSON.parse(stored) as DistractionLog[]) : [];
-  const newLog = { id: generatedId, ...log } as DistractionLog;
   list.push(newLog);
   localStorage.setItem(storedKey, JSON.stringify(list));
   return generatedId;

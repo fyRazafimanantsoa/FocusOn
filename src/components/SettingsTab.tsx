@@ -14,7 +14,10 @@ import {
   CircleCheck,
   Sun,
   Moon,
-  Download
+  Download,
+  Database,
+  Check,
+  ArrowUpRight
 } from "lucide-react";
 
 interface SettingsTabProps {
@@ -38,6 +41,71 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
   const [feedbackMessage, setFeedbackMessage] = React.useState("");
   const [isFeedbackSubmitting, setIsFeedbackSubmitting] = React.useState(false);
   const [feedbackStatus, setFeedbackStatus] = React.useState<'idle' | 'success' | 'error'>('idle');
+
+  // Supabase state management
+  const [supabaseStatus, setSupabaseStatus] = React.useState<'idle' | 'testing' | 'success' | 'error' | 'schema_missing'>('idle');
+  const [supabaseMsg, setSupabaseMsg] = React.useState("");
+  const [showSQL, setShowSQL] = React.useState(false);
+  const [checkoutStatus, setCheckoutStatus] = React.useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [lastCheckoutId, setLastCheckoutId] = React.useState("");
+
+  const handleTestSupabase = async () => {
+    setSupabaseStatus('testing');
+    try {
+      const res = await fetch("/api/supabase/test-connection", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.schemaMissing) {
+          setSupabaseStatus('schema_missing');
+          setSupabaseMsg(data.message);
+        } else {
+          setSupabaseStatus('success');
+          setSupabaseMsg(data.message);
+        }
+      } else {
+        setSupabaseStatus('error');
+        setSupabaseMsg(data.error || "Connection failed.");
+      }
+    } catch (err: any) {
+      setSupabaseStatus('error');
+      setSupabaseMsg(err.message || "Network error.");
+    }
+  };
+
+  const handleSimulateCheckout = async () => {
+    setCheckoutStatus('sending');
+    const checkoutId = `chk_${Date.now()}`;
+    const payload = {
+      id: checkoutId,
+      user_id: user?.uid || "local-user",
+      email: user?.email || "sandbox_visitor@focuson.io",
+      amount: "9.99",
+      currency: "USD",
+      plan_type: "focuson_premium_monthly",
+      status: "completed",
+      stripe_session_id: `cs_test_${Math.random().toString(36).substring(2, 11)}`,
+      created_at: new Date().toISOString()
+    };
+
+    try {
+      const res = await fetch("/api/supabase/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCheckoutStatus('success');
+        setLastCheckoutId(checkoutId);
+      } else {
+        setCheckoutStatus('error');
+        alert(data.error || "Failed to log checkout. Please ensure tables are created first using the SQL script!");
+      }
+    } catch (err: any) {
+      setCheckoutStatus('error');
+      alert(err.message || "Failed to make request.");
+    }
+  };
 
   const handleSendFeedback = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -412,6 +480,131 @@ export default function SettingsTab({ user, profile, sessions, projects, onUpdat
                   >
                     Clear System History
                   </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Supabase Analytics Integration card */}
+          <div className="p-6 pt-8 pb-5 bg-bg-card border border-border-app rotate-[-0.5deg] space-y-4 text-left relative z-10 shadow-[2px_2px_0px_var(--border-app)] transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-text-muted" />
+                <h4 className="text-xl font-black text-text-primary uppercase tracking-tighter leading-[0.85] transition-colors duration-300">Supabase Integration</h4>
+              </div>
+              <span className={`px-2 py-0.5 rounded text-[8px] font-mono uppercase tracking-widest border ${
+                supabaseStatus === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                supabaseStatus === 'schema_missing' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
+                supabaseStatus === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+                supabaseStatus === 'testing' ? 'bg-zinc-500/10 border-zinc-500/30 text-zinc-400 animate-pulse' :
+                'bg-zinc-500/10 border-zinc-500/30 text-zinc-400'
+              }`}>
+                {supabaseStatus === 'success' ? 'Active' :
+                 supabaseStatus === 'schema_missing' ? 'Table Alert' :
+                 supabaseStatus === 'error' ? 'Connection Error' :
+                 supabaseStatus === 'testing' ? 'Testing...' :
+                 'Not Checked'}
+              </span>
+            </div>
+
+            <p className="text-[10px] text-text-muted font-mono tracking-widest uppercase leading-relaxed mt-2 transition-colors duration-300">
+              Linked to Project ID: <span className="text-text-primary">dtaeglpiuwsvqiydofwo</span> (FocusOn). Focus sessions, distraction lists, and premium checkouts write securely to your relational schema.
+            </p>
+
+            {supabaseMsg && (
+              <div className={`p-3 text-[11px] rounded font-mono leading-normal border ${
+                supabaseStatus === 'success' ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-300' :
+                supabaseStatus === 'schema_missing' ? 'bg-amber-950/20 border-amber-900/50 text-amber-300' :
+                'bg-red-950/20 border-red-900/50 text-red-300'
+              }`}>
+                {supabaseMsg}
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleTestSupabase}
+                disabled={supabaseStatus === 'testing'}
+                className="px-3.5 py-2.5 text-[10px] font-mono uppercase tracking-widest border bg-bg-btn hover:bg-bg-btn-hover border-border-app text-text-secondary hover:text-text-primary cursor-pointer flex-1 flex items-center justify-center gap-2 transition-colors"
+              >
+                {supabaseStatus === 'testing' ? "Connecting..." : "Test Supabase Connection"}
+              </button>
+              
+              <button
+                type="button"
+                onClick={handleSimulateCheckout}
+                disabled={checkoutStatus === 'sending'}
+                className="px-3.5 py-2.5 text-[10px] font-mono uppercase tracking-widest border bg-text-primary border-text-primary text-bg-app hover:opacity-90 font-bold cursor-pointer flex-1 flex items-center justify-center gap-2 transition-all shadow-[0_4px_12px_rgba(255,255,255,0.1)]"
+              >
+                {checkoutStatus === 'sending' ? "Upgrading..." : "Simulate Premium Upgrade"}
+              </button>
+            </div>
+
+            {checkoutStatus === 'success' && (
+              <div className="p-3 bg-emerald-950/20 border border-emerald-900/50 rounded font-mono text-[10px] text-emerald-300 leading-normal animate-fade-in">
+                🎉 <strong className="uppercase">Checkout Logged in Supabase!</strong><br />
+                A real premium checkout receipt (ID: <span className="text-white">{lastCheckoutId}</span>) has been written to the <code className="text-white font-bold bg-black/40 px-1 py-0.5 rounded">checkouts</code> table in your database.
+              </div>
+            )}
+
+            <div className="border-t border-border-app/40 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowSQL(!showSQL)}
+                className="w-full text-left text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-text-primary flex items-center justify-between cursor-pointer"
+              >
+                <span>View Supabase SQL Schema</span>
+                <span className="text-xs">{showSQL ? "Collapse ▲" : "Expand ▼"}</span>
+              </button>
+
+              {showSQL && (
+                <div className="mt-3 space-y-2 animate-fade-in">
+                  <p className="text-[10px] text-text-muted leading-relaxed">
+                    Create these tables in your Supabase SQL Editor to make checkout saves and logs work seamlessly. A copy of this is saved in <code className="text-text-secondary font-bold">/supabase_schema.sql</code>.
+                  </p>
+                  <pre className="p-3 bg-black/60 rounded border border-border-app text-[9px] font-mono text-zinc-300 overflow-x-auto max-h-48 leading-relaxed">
+{`-- SQL script for Supabase Editor
+CREATE TABLE IF NOT EXISTS public.checkouts (
+    id VARCHAR(255) PRIMARY KEY,
+    user_id VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    amount NUMERIC(10, 2) NOT NULL,
+    currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+    status VARCHAR(50) NOT NULL,
+    plan_type VARCHAR(100) NOT NULL,
+    stripe_session_id VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public.focus_sessions (
+    id VARCHAR(255) PRIMARY KEY,
+    user_id VARCHAR(255) NOT NULL,
+    task_name VARCHAR(255) NOT NULL,
+    tiny_step TEXT,
+    original_duration_minutes INTEGER NOT NULL,
+    actual_duration_seconds INTEGER NOT NULL,
+    completed BOOLEAN DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    date_str VARCHAR(10) NOT NULL,
+    reflection_notes TEXT,
+    next_step_suggested TEXT,
+    stuck_count INTEGER DEFAULT 0,
+    distraction_check_in_count INTEGER DEFAULT 0,
+    project_id VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS public.distraction_logs (
+    id VARCHAR(255) PRIMARY KEY,
+    user_id VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    activity TEXT NOT NULL,
+    choice VARCHAR(50) NOT NULL,
+    notes TEXT
+);`}
+                  </pre>
                 </div>
               )}
             </div>

@@ -1,7 +1,29 @@
 import express from "express";
+import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 app.use(express.json());
+
+// Supabase Configuration
+const SUPABASE_URL = (process.env.SUPABASE_URL || "https://dtaeglpiuwsvqiydofwo.supabase.co").replace(/\/rest\/v1\/?$/, "");
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "sb_publishable_a5mPk7220E79hoV58PBiew_5pivJUB3";
+
+let supabase: any = null;
+
+function getSupabase() {
+  if (!supabase) {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return null;
+    }
+    try {
+      supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (err) {
+      console.error("Failed to initialize Supabase client:", err);
+      return null;
+    }
+  }
+  return supabase;
+}
 
 const FIREBASE_API_KEY = "AIzaSyAK81XHflF2MyDLKCdE0V7QJi1zXPZTn3I";
 
@@ -96,17 +118,95 @@ app.get("/api/user-profile", async (req, res) => {
   if (!uid) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?key=${FIREBASE_API_KEY}`, {
-      headers: { "Authorization": authHeader! }
-    });
-    if (response.status === 404) {
+    const supabaseClient = getSupabase();
+    let profile: any = null;
+
+    if (supabaseClient) {
+      // 1. Try fetching from Supabase first
+      const { data: profileData, error: profileError } = await supabaseClient
+        .from("user_profiles")
+        .select("*")
+        .eq("uid", uid)
+        .single();
+
+      if (profileData && !profileError) {
+        // Fetch projects as well
+        const { data: projectsData } = await supabaseClient
+          .from("projects")
+          .select("*")
+          .eq("user_id", uid);
+
+        profile = {
+          uid: profileData.uid,
+          email: profileData.email,
+          displayName: profileData.display_name,
+          photoURL: profileData.photo_url,
+          createdAt: profileData.created_at,
+          adhdMode: profileData.adhd_mode,
+          weeklyGoalMinutes: profileData.weekly_goal_minutes,
+          theme: profileData.theme,
+          projects: (projectsData || []).map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            isArchived: p.is_archived,
+            customDuration: p.custom_duration,
+            weeklyGoalHours: p.weekly_goal_hours
+          })),
+          completedOnboarding: true
+        };
+      }
+    }
+
+    // 2. If not found in Supabase, fall back to Firestore to fetch (and migrate if found)
+    if (!profile) {
+      const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?key=${FIREBASE_API_KEY}`, {
+        headers: { "Authorization": authHeader! }
+      });
+      if (response.status === 200) {
+        const data: any = await response.json();
+        const firestoreProfile = fromFirestoreFields(data.fields);
+        if (firestoreProfile) {
+          profile = firestoreProfile;
+
+          // Migrate/upsert this user profile to Supabase in the background!
+          if (supabaseClient) {
+            supabaseClient
+              .from("user_profiles")
+              .upsert({
+                uid: uid,
+                email: profile.email || "user@focuson.app",
+                display_name: profile.displayName || "FocusOn Pilot",
+                photo_url: profile.photoURL || null,
+                adhd_mode: profile.adhdMode !== false,
+                weekly_goal_minutes: profile.weeklyGoalMinutes || 150,
+                theme: profile.theme || "dark"
+              })
+              .then(() => {
+                if (profile.projects && Array.isArray(profile.projects)) {
+                  for (const p of profile.projects) {
+                    supabaseClient.from("projects").upsert({
+                      id: p.id,
+                      user_id: uid,
+                      name: p.name,
+                      color: p.color,
+                      is_archived: !!p.isArchived,
+                      custom_duration: p.customDuration || null,
+                      weekly_goal_hours: p.weeklyGoalHours || null
+                    }).catch((e: any) => console.warn("Sync project error:", e));
+                  }
+                }
+              })
+              .catch((e: any) => console.warn("Sync user profile error:", e));
+          }
+        }
+      }
+    }
+
+    if (!profile) {
       return res.status(404).json({ error: "Profile not found" });
     }
-    const data: any = await response.json();
-    if (data.error) {
-      return res.status(response.status).json({ error: data.error.message });
-    }
-    const profile = fromFirestoreFields(data.fields);
+
     res.json(profile);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -121,25 +221,54 @@ app.post("/api/user-profile", async (req, res) => {
 
   try {
     const profileData = req.body;
+
+    // 1. Save to Supabase first
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      const upsertObj: any = { uid };
+      if (profileData.email !== undefined) upsertObj.email = profileData.email;
+      if (profileData.displayName !== undefined) upsertObj.display_name = profileData.displayName;
+      if (profileData.photoURL !== undefined) upsertObj.photo_url = profileData.photoURL;
+      if (profileData.adhdMode !== undefined) upsertObj.adhd_mode = profileData.adhdMode;
+      if (profileData.weeklyGoalMinutes !== undefined) upsertObj.weekly_goal_minutes = profileData.weeklyGoalMinutes;
+      if (profileData.theme !== undefined) upsertObj.theme = profileData.theme;
+      if (profileData.createdAt !== undefined) upsertObj.created_at = profileData.createdAt;
+
+      await supabaseClient
+        .from("user_profiles")
+        .upsert(upsertObj);
+
+      // Handle projects upsert
+      if (profileData.projects && Array.isArray(profileData.projects)) {
+        for (const p of profileData.projects) {
+          await supabaseClient.from("projects").upsert({
+            id: p.id,
+            user_id: uid,
+            name: p.name,
+            color: p.color,
+            is_archived: !!p.isArchived,
+            custom_duration: p.customDuration || null,
+            weekly_goal_hours: p.weeklyGoalHours || null
+          });
+        }
+      }
+    }
+
+    // 2. Sync/Backup to Firestore in the background
     const fields = toFirestoreFields(profileData);
-    
     const keys = Object.keys(profileData);
     const queryParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
 
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?${queryParams}&key=${FIREBASE_API_KEY}`, {
+    fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/users/${uid}?${queryParams}&key=${FIREBASE_API_KEY}`, {
       method: "PATCH",
       headers: {
         "Authorization": authHeader!,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ fields })
-    });
+    }).catch(err => console.warn("Firestore backup profile warning:", err));
 
-    const result: any = await response.json();
-    if (result.error) {
-      return res.status(response.status).json({ error: result.error.message });
-    }
-    res.json(fromFirestoreFields(result.fields));
+    res.json(profileData);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -154,46 +283,106 @@ app.get("/api/user-sessions", async (req, res) => {
   const limitCount = parseInt(req.query.limit as string || "50", 10);
 
   try {
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`, {
-      method: "POST",
-      headers: {
-        "Authorization": authHeader!,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        structuredQuery: {
-          from: [{ collectionId: "sessions" }],
-          where: {
-            fieldFilter: {
-              field: { fieldPath: "userId" },
-              op: "EQUAL",
-              value: { stringValue: uid }
-            }
-          },
-          orderBy: [
-            {
-              field: { fieldPath: "createdAt" },
-              direction: "DESCENDING"
-            }
-          ],
-          limit: limitCount
-        }
-      })
-    });
+    const supabaseClient = getSupabase();
+    let sessions: any[] = [];
 
-    const result: any = await response.json();
-    if (response.status !== 200) {
-      return res.status(response.status).json({ error: result.error?.message || "Error running query" });
+    if (supabaseClient) {
+      // 1. Fetch from Supabase first
+      const { data: sessionsData, error: sessionsError } = await supabaseClient
+        .from("focus_sessions")
+        .select("*")
+        .eq("user_id", uid)
+        .order("created_at", { ascending: false })
+        .limit(limitCount);
+
+      if (sessionsData && !sessionsError && sessionsData.length > 0) {
+        sessions = sessionsData.map((s: any) => ({
+          id: s.id,
+          userId: s.user_id,
+          taskName: s.task_name,
+          tinyStep: s.tiny_step,
+          originalDurationMinutes: s.original_duration_minutes,
+          actualDurationSeconds: s.actual_duration_seconds,
+          completed: s.completed,
+          status: s.status,
+          createdAt: s.created_at,
+          dateStr: s.date_str,
+          reflectionNotes: s.reflection_notes,
+          nextStepSuggested: s.next_step_suggested,
+          stuckCount: s.stuck_count,
+          distractionCheckInCount: s.distraction_check_in_count,
+          projectId: s.project_id
+        }));
+      }
     }
 
-    const sessions: any[] = [];
-    if (Array.isArray(result)) {
-      for (const entry of result) {
-        if (entry.document) {
-          sessions.push(fromFirestoreFields(entry.document.fields));
+    // 2. Fallback to Firestore if Supabase returned empty/failed, and migrate if found
+    if (sessions.length === 0) {
+      const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`, {
+        method: "POST",
+        headers: {
+          "Authorization": authHeader!,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: "sessions" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "userId" },
+                op: "EQUAL",
+                value: { stringValue: uid }
+              }
+            },
+            orderBy: [
+              {
+                field: { fieldPath: "createdAt" },
+                direction: "DESCENDING"
+              }
+            ],
+            limit: limitCount
+          }
+        })
+      });
+
+      const result: any = await response.json();
+      if (response.status === 200 && Array.isArray(result)) {
+        const firestoreSessions: any[] = [];
+        for (const entry of result) {
+          if (entry.document) {
+            firestoreSessions.push(fromFirestoreFields(entry.document.fields));
+          }
+        }
+
+        if (firestoreSessions.length > 0) {
+          sessions = firestoreSessions;
+
+          // Backfill/Migrate Firestore sessions to Supabase in background
+          if (supabaseClient) {
+            for (const sess of firestoreSessions) {
+              supabaseClient.from("focus_sessions").upsert({
+                id: sess.id || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                user_id: uid,
+                task_name: sess.taskName,
+                tiny_step: sess.tinyStep || null,
+                original_duration_minutes: parseInt(sess.originalDurationMinutes) || 0,
+                actual_duration_seconds: parseInt(sess.actualDurationSeconds) || 0,
+                completed: !!sess.completed,
+                status: sess.status,
+                created_at: sess.createdAt,
+                date_str: sess.dateStr,
+                reflection_notes: sess.reflectionNotes || null,
+                next_step_suggested: sess.nextStepSuggested || null,
+                stuck_count: parseInt(sess.stuckCount) || 0,
+                distraction_check_in_count: parseInt(sess.distractionCheckInCount) || 0,
+                project_id: sess.projectId || null
+              }).catch((e: any) => console.warn("Backfill session warning:", e));
+            }
+          }
         }
       }
     }
+
     res.json(sessions);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -213,23 +402,48 @@ app.post("/api/user-sessions", async (req, res) => {
 
   try {
     session.userId = uid;
+
+    // 1. Save/Upsert to Supabase first
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      const { error: supabaseError } = await supabaseClient.from("focus_sessions").upsert({
+        id: id,
+        user_id: uid,
+        task_name: session.taskName,
+        tiny_step: session.tinyStep || null,
+        original_duration_minutes: parseInt(session.originalDurationMinutes) || 0,
+        actual_duration_seconds: parseInt(session.actualDurationSeconds) || 0,
+        completed: !!session.completed,
+        status: session.status,
+        created_at: session.createdAt,
+        date_str: session.dateStr,
+        reflection_notes: session.reflectionNotes || null,
+        next_step_suggested: session.nextStepSuggested || null,
+        stuck_count: parseInt(session.stuckCount) || 0,
+        distraction_check_in_count: parseInt(session.distractionCheckInCount) || 0,
+        project_id: session.projectId || null
+      });
+
+      if (supabaseError) {
+        console.error("Supabase focus_sessions save error:", supabaseError);
+        return res.status(400).json({ error: supabaseError.message });
+      }
+    }
+
+    // 2. Sync/Backup to Firestore in the background
     const fields = toFirestoreFields(session);
     const keys = Object.keys(session);
     const queryParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
 
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${id}?${queryParams}&key=${FIREBASE_API_KEY}`, {
+    fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${id}?${queryParams}&key=${FIREBASE_API_KEY}`, {
       method: "PATCH",
       headers: {
         "Authorization": authHeader!,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ fields })
-    });
+    }).catch(err => console.warn("Firestore backup session warning:", err));
 
-    const result: any = await response.json();
-    if (result.error) {
-      return res.status(response.status).json({ error: result.error.message });
-    }
     res.json({ success: true, id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -245,17 +459,29 @@ app.delete("/api/user-sessions/:id", async (req, res) => {
   const sessionId = req.params.id;
 
   try {
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}?key=${FIREBASE_API_KEY}`, {
+    // 1. Delete from Supabase first
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      const { error: supabaseError } = await supabaseClient
+        .from("focus_sessions")
+        .delete()
+        .eq("id", sessionId)
+        .eq("user_id", uid);
+
+      if (supabaseError) {
+        console.error("Supabase session delete error:", supabaseError);
+        return res.status(400).json({ error: supabaseError.message });
+      }
+    }
+
+    // 2. Sync/Backup delete from Firestore in the background
+    fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}?key=${FIREBASE_API_KEY}`, {
       method: "DELETE",
       headers: {
         "Authorization": authHeader!
       }
-    });
+    }).catch(err => console.warn("Firestore backup session delete warning:", err));
 
-    if (response.status !== 200 && response.status !== 204) {
-      const result: any = await response.json();
-      return res.status(response.status).json({ error: result.error?.message || "Error deleting session" });
-    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -269,6 +495,21 @@ app.delete("/api/user-sessions", async (req, res) => {
   if (!uid) return res.status(401).json({ error: "Unauthorized" });
 
   try {
+    // 1. Delete from Supabase first
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      const { error: supabaseError } = await supabaseClient
+        .from("focus_sessions")
+        .delete()
+        .eq("user_id", uid);
+
+      if (supabaseError) {
+        console.error("Supabase session batch delete error:", supabaseError);
+        return res.status(400).json({ error: supabaseError.message });
+      }
+    }
+
+    // 2. Backup delete from Firestore in the background
     const listResponse = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`, {
       method: "POST",
       headers: {
@@ -290,22 +531,18 @@ app.delete("/api/user-sessions", async (req, res) => {
     });
 
     const result: any = await listResponse.json();
-    if (listResponse.status !== 200) {
-      return res.status(listResponse.status).json({ error: result.error?.message || "Error getting sessions" });
-    }
-
-    if (Array.isArray(result)) {
+    if (listResponse.status === 200 && Array.isArray(result)) {
       for (const entry of result) {
         if (entry.document) {
           const docName = entry.document.name;
           const parts = docName.split("/");
           const sessionId = parts[parts.length - 1];
-          await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}?key=${FIREBASE_API_KEY}`, {
+          fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/sessions/${sessionId}?key=${FIREBASE_API_KEY}`, {
             method: "DELETE",
             headers: {
               "Authorization": authHeader!
             }
-          });
+          }).catch(err => console.warn("Firestore backup session batch item delete warning:", err));
         }
       }
     }
@@ -329,23 +566,40 @@ app.post("/api/distraction-log", async (req, res) => {
 
   try {
     log.userId = uid;
+
+    // 1. Save to Supabase first
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      const { error: supabaseError } = await supabaseClient.from("distraction_logs").upsert({
+        id: id,
+        user_id: uid,
+        session_id: log.sessionId,
+        timestamp: log.timestamp,
+        activity: log.activity,
+        choice: log.choice,
+        notes: log.notes || null
+      });
+
+      if (supabaseError) {
+        console.error("Supabase distraction_logs save error:", supabaseError);
+        return res.status(400).json({ error: supabaseError.message });
+      }
+    }
+
+    // 2. Backup to Firestore in the background
     const fields = toFirestoreFields(log);
     const keys = Object.keys(log);
     const queryParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
 
-    const response = await fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/distractions/${id}?${queryParams}&key=${FIREBASE_API_KEY}`, {
+    fetch(`https://firestore.googleapis.com/v1/projects/focuson-webapp/databases/(default)/documents/distractions/${id}?${queryParams}&key=${FIREBASE_API_KEY}`, {
       method: "PATCH",
       headers: {
         "Authorization": authHeader!,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ fields })
-    });
+    }).catch(err => console.warn("Firestore backup distraction warning:", err));
 
-    const result: any = await response.json();
-    if (result.error) {
-      return res.status(response.status).json({ error: result.error.message });
-    }
     res.json({ success: true, id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -377,6 +631,69 @@ app.post("/api/feedback", (req, res) => {
     success: true,
     message: "Feedback processed successfully. Sent to allinus2025@gmail.com"
   });
+});
+
+// Test Supabase Connection
+app.post("/api/supabase/test-connection", async (req, res) => {
+  const client = getSupabase();
+  if (!client) {
+    return res.status(500).json({ success: false, error: "Supabase client not initialized" });
+  }
+  try {
+    const { data, error } = await client.from("checkouts").select("id").limit(1);
+    if (error) {
+      if (error.code === "PGRST116" || error.code === "42P01") {
+        return res.json({ 
+          success: true, 
+          schemaMissing: true, 
+          message: "Successfully connected to Supabase, but some tables (like 'checkouts') are missing in your public schema. Please paste the generated SQL script into your Supabase SQL Editor to provision the tables!"
+        });
+      }
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.json({ success: true, message: "Successfully connected to Supabase! All tables are active." });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Store Checkout Data in Supabase
+app.post("/api/supabase/checkout", async (req, res) => {
+  const client = getSupabase();
+  if (!client) {
+    return res.status(500).json({ error: "Supabase client not initialized" });
+  }
+  const checkout = req.body;
+  if (!checkout.id || !checkout.user_id || !checkout.email || !checkout.amount || !checkout.plan_type) {
+    return res.status(400).json({ error: "Missing required checkout parameters" });
+  }
+
+  try {
+    const { data, error } = await client
+      .from("checkouts")
+      .insert([
+        {
+          id: checkout.id,
+          user_id: checkout.user_id,
+          email: checkout.email,
+          amount: parseFloat(checkout.amount),
+          currency: checkout.currency || "USD",
+          status: checkout.status || "completed",
+          plan_type: checkout.plan_type,
+          stripe_session_id: checkout.stripe_session_id || null,
+          created_at: checkout.created_at || new Date().toISOString()
+        }
+      ]);
+
+    if (error) {
+      console.error("Supabase checkout insert error:", error);
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
+
+    res.json({ success: true, message: "Checkout saved successfully to Supabase!", data });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default app;

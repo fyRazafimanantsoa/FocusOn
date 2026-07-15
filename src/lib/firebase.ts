@@ -6,7 +6,8 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut,
-  updateProfile
+  updateProfile,
+  sendPasswordResetEmail
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
@@ -40,4 +41,5 @@ export const updateDisplayName = (name: string) => {
   return Promise.resolve();
 };
 export const logOut = () => signOut(auth);
+export const sendPasswordReset = (email: string) => sendPasswordResetEmail(auth, email);
 
